@@ -35,16 +35,14 @@ POPULAR_MARKETS = {
     "USDTRY=X": "USD/TRY Forex"
 }
 
-# Sunucuyu yormamak için asenkron (async) veri çekme motoru
 async def analyze_market_async(ticker, timeframe='1d'):
     try:
-        # Kodun asılı kalmasını önlemek için işlemi arka planda çalıştırıyoruz
         loop = asyncio.get_event_loop()
         asset = yf.Ticker(ticker)
         df = await loop.run_in_executor(None, lambda: asset.history(period='3mo', interval=timeframe))
         
         if df.empty or len(df) < 15:
-            return f"❌ Veri alinamadi: {ticker}\n"
+            return f"X Veri alinamadi: {ticker}\n"
         
         df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         df['MACD'] = ta.trend.macd(df['Close'])
@@ -61,11 +59,11 @@ async def analyze_market_async(ticker, timeframe='1d'):
         if macd > macd_sig: score += 1
         else: score -= 1
         
-        if score >= 2: signal = "🟢 STRONG BUY"
-        elif score == 1: signal = "🌱 BUY"
-        elif score == -1: signal = "🚨 SELL"
-        elif score <= -2: signal = "🔴 STRONG SELL"
-        else: signal = "🟡 NEUTRAL"
+        if score >= 2: signal = "[STRONGBUY]"
+        elif score == 1: signal = "[BUY]"
+        elif score == -1: signal = "[SELL]"
+        elif score <= -2: signal = "[STRONGSELL]"
+        else: signal = "[NEUTRAL]"
         
         if "BUY" in signal:
             sl = current_price * 0.95
@@ -79,34 +77,34 @@ async def analyze_market_async(ticker, timeframe='1d'):
 
         tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
         report = (
-            f"📈 **Symbol:** {ticker} ({POPULAR_MARKETS[ticker]})\n"
-            f"⏱ **Zaman Dilimi:** {tf_labels[timeframe]}\n"
-            f"💰 **Fiyat:** {current_price:.4f}\n"
-            f"📢 **SINYAL:** {signal}\n"
-            f"🛑 **SL:** {sl:.4f} | 🎯 **TP:** {tp:.4f}\n"
-            f"📊 **RSI:** {rsi:.2f}\n"
+            f"Symbol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
+            f"Zaman Dilimi: {tf_labels[timeframe]}\n"
+            f"Fiyat: {current_price:.4f}\n"
+            f"SINYAL: {signal}\n"
+            f"SL: {sl:.4f} | TP: {tp:.4f}\n"
+            f"RSI: {rsi:.2f}\n"
             f"----------------------------------------\n"
         )
         return report
     except Exception as e:
-        return f"❌ Hata {ticker}: {str(e)}\n"
+        return f"X Hata {ticker}: {str(e)}\n"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['/analiz_gunluk', '/analiz_haftalik'], ['/analiz_aylik', '/guncelle']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("👋 HaPeFin Finans Ajanina Hos Geldiniz!\n\nLütfen analiz periyodunu seçin:", reply_markup=reply_markup)
+    await update.message.reply_text("HaPeFin Finans Ajanina Hos Geldiniz! Periyot seciniz:", reply_markup=reply_markup)
 
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
-    tf_labels = {'1d': 'GÜNLÜK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
-    master_report = f"📊 **PİYASA {tf_labels[timeframe]} RAPORU**\n📅 {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+    tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
+    master_report = f"PIYASA {tf_labels[timeframe]} RAPORU\n\n"
     
-    # Sunucu kilitlenmesin diye her veriyi sırayla ve 0.5 saniye dinlenerek çekiyoruz
     for ticker in POPULAR_MARKETS.keys():
         report_part = await analyze_market_async(ticker, timeframe)
         master_report += report_part
         await asyncio.sleep(0.5) 
         
-    await application.bot.send_message(chat_id=target_chat_id, text=master_report, parse_mode="Markdown")
+    # parse_mode kuralını tamamen kaldırarak düz temiz metin fırlatıyoruz
+    await application.bot.send_message(chat_id=target_chat_id, text=master_report)
 
 async def scheduled_morning_report(application):
     await send_bulk_report(application, MY_CHAT_ID, '1d')
@@ -115,7 +113,7 @@ async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_chat_id = update.message.chat_id
     
-    status_msg = await update.message.reply_text("🔄 Yapay zeka verileri analiz ediyor, lütfen bekleyin...")
+    status_msg = await update.message.reply_text("Yapaya zeka verileri analiz ediyor, lutfen bekleyin...")
     
     if text == '/analiz_gunluk' or text == '/guncelle':
         await send_bulk_report(context.application, user_chat_id, '1d')
