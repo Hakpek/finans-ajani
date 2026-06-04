@@ -6,7 +6,7 @@ import os
 import asyncio
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 import threading
@@ -97,35 +97,33 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
     master_report = f"PIYASA {tf_labels[timeframe]} RAPORU\n\n"
-    
     for ticker in POPULAR_MARKETS.keys():
         report_part = await analyze_market_async(ticker, timeframe)
         master_report += report_part
-        await asyncio.sleep(0.5) 
-        
-    # parse_mode kuralını tamamen kaldırarak düz temiz metin fırlatıyoruz
+        await asyncio.sleep(0.2) 
     await application.bot.send_message(chat_id=target_chat_id, text=master_report)
 
 async def scheduled_morning_report(application):
     await send_bulk_report(application, MY_CHAT_ID, '1d')
 
-async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_chat_id = update.message.chat_id
-    
-    status_msg = await update.message.reply_text("Yapaya zeka verileri analiz ediyor, lutfen bekleyin...")
-    
-    if text == '/analiz_gunluk' or text == '/guncelle':
-        await send_bulk_report(context.application, user_chat_id, '1d')
-    elif text == '/analiz_haftalik':
-        await send_bulk_report(context.application, user_chat_id, '1wk')
-    elif text == '/analiz_aylik':
-        await send_bulk_report(context.application, user_chat_id, '1mo')
-        
-    try:
-        await status_msg.delete()
-    except:
-        pass
+# Her komut butonu icin ayri ve doğrudan tetikleyiciler
+async def cmd_gunluk(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("🔄 Yapay zeka verileri analiz ediyor, lütfen bekleyin...")
+    await send_bulk_report(context.application, update.message.chat_id, '1d')
+    try: await status_msg.delete()
+    except: pass
+
+async def cmd_haftalik(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("🔄 Yapay zeka verileri analiz ediyor, lütfen bekleyin...")
+    await send_bulk_report(context.application, update.message.chat_id, '1wk')
+    try: await status_msg.delete()
+    except: pass
+
+async def cmd_aylik(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    status_msg = await update.message.reply_text("🔄 Yapay zeka verileri analiz ediyor, lütfen bekleyin...")
+    await send_bulk_report(context.application, update.message.chat_id, '1mo')
+    try: await status_msg.delete()
+    except: pass
 
 async def post_init(application: Application):
     scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
@@ -135,8 +133,13 @@ async def post_init(application: Application):
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    
+    # Komut algılayıcıları doğrudan buton isimlerine bağladık
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_commands))
+    app.add_handler(CommandHandler("analiz_gunluk", cmd_gunluk))
+    app.add_handler(CommandHandler("guncelle", cmd_gunluk))
+    app.add_handler(CommandHandler("analiz_haftalik", cmd_haftalik))
+    app.add_handler(CommandHandler("analiz_aylik", cmd_aylik))
     
     print("🤖 Finans Ajani Basariyla Aktif Edildi!")
     app.run_polling()
