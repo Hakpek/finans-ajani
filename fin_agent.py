@@ -2,15 +2,32 @@ import logging
 import yfinance as yf
 import pandas as pd
 import ta
+import os
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from flask import Flask
+import threading
 
+# Loglama ayarı
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.WARNING)
 
+# --- SÜREKLİ AKTİF KALMASI İÇİN SANAL WEB SUNUCUSU (FLASK) ---
+flask_app = Flask(__name__)
+
+@flask_app.route('/')
+def home():
+    return "Finans Ajani Calisiyor!"
+
+def run_flask():
+    # Render'ın ücretsiz sunucusunun istediği port ayarı
+    port = int(os.environ.get("PORT", 10000))
+    flask_app.run(host='0.0.0.0', port=port)
+
+# --- FİNANS AJANI KODLARI ---
 TELEGRAM_TOKEN = "8714335607:AAGt-nPJUsPPIGGmVeQzEnJi3mIbVNMluc0"
-MY_CHAT_ID = 965495144  # Sabah raporu için sabit kimliğiniz
+MY_CHAT_ID = 965495144 
 
 POPULAR_MARKETS = {
     "THYAO.IS": "Turk Hava Yollari",
@@ -26,7 +43,7 @@ def analyze_market(ticker, timeframe='1d'):
         asset = yf.Ticker(ticker)
         df = asset.history(period='3mo', interval=timeframe)
         if df.empty or len(df) < 15:
-            return f"❌ Veri alınamadı: {ticker}\n"
+            return f"❌ Veri alinamadi: {ticker}\n"
         
         df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         df['MACD'] = ta.trend.macd(df['Close'])
@@ -76,7 +93,7 @@ def analyze_market(ticker, timeframe='1d'):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['/analiz_gunluk', '/analiz_haftalik'], ['/analiz_aylik', '/guncelle']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("👋 HaPeFin Finans Ajanına Hoş Geldiniz!\n\nLütfen analiz periyodunu seçin:", reply_markup=reply_markup)
+    await update.message.reply_text("👋 HaPeFin Finans Ajanina Hos Geldiniz!\n\nLütfen analiz periyodunu seçin:", reply_markup=reply_markup)
 
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GÜNLÜK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
@@ -90,7 +107,7 @@ async def scheduled_morning_report(application):
 
 async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user_chat_id = update.message.chat_id  # Mesajı atan kişinin ID'sini dinamik alıyoruz
+    user_chat_id = update.message.chat_id
     
     status_msg = await update.message.reply_text("🔄 Yapay zeka verileri analiz ediyor, lütfen bekleyin...")
     
@@ -112,11 +129,14 @@ async def post_init(application: Application):
     scheduler.start()
 
 def main():
+    # Sanal web sunucusunu ayri bir kanalda baslatıyoruz (Render uyumu icin)
+    threading.Thread(target=run_flask, daemon=True).start()
+    
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_commands))
     
-    print("🤖 Finans Ajani Başarıyla Aktif Edildi!")
+    print("🤖 Finans Ajani Basariyla Aktif Edildi!")
     app.run_polling()
 
 if __name__ == '__main__':
