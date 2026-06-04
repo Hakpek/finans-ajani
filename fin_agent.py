@@ -3,6 +3,7 @@ import yfinance as yf
 import pandas as pd
 import ta
 import os
+import asyncio
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -10,10 +11,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 import threading
 
-# Loglama ayarı
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.WARNING)
 
-# --- SÜREKLİ AKTİF KALMASI İÇİN SANAL WEB SUNUCUSU (FLASK) ---
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -21,11 +20,9 @@ def home():
     return "Finans Ajani Calisiyor!"
 
 def run_flask():
-    # Render'ın ücretsiz sunucusunun istediği port ayarı
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# --- FİNANS AJANI KODLARI ---
 TELEGRAM_TOKEN = "8714335607:AAGt-nPJUsPPIGGmVeQzEnJi3mIbVNMluc0"
 MY_CHAT_ID = 965495144 
 
@@ -38,10 +35,14 @@ POPULAR_MARKETS = {
     "USDTRY=X": "USD/TRY Forex"
 }
 
-def analyze_market(ticker, timeframe='1d'):
+# Sunucuyu yormamak için asenkron (async) veri çekme motoru
+async def analyze_market_async(ticker, timeframe='1d'):
     try:
+        # Kodun asılı kalmasını önlemek için işlemi arka planda çalıştırıyoruz
+        loop = asyncio.get_event_loop()
         asset = yf.Ticker(ticker)
-        df = asset.history(period='3mo', interval=timeframe)
+        df = await loop.run_in_executor(None, lambda: asset.history(period='3mo', interval=timeframe))
+        
         if df.empty or len(df) < 15:
             return f"❌ Veri alinamadi: {ticker}\n"
         
@@ -98,8 +99,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GÜNLÜK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
     master_report = f"📊 **PİYASA {tf_labels[timeframe]} RAPORU**\n📅 {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+    
+    # Sunucu kilitlenmesin diye her veriyi sırayla ve 0.5 saniye dinlenerek çekiyoruz
     for ticker in POPULAR_MARKETS.keys():
-        master_report += analyze_market(ticker, timeframe)
+        report_part = await analyze_market_async(ticker, timeframe)
+        master_report += report_part
+        await asyncio.sleep(0.5) 
+        
     await application.bot.send_message(chat_id=target_chat_id, text=master_report, parse_mode="Markdown")
 
 async def scheduled_morning_report(application):
@@ -129,9 +135,7 @@ async def post_init(application: Application):
     scheduler.start()
 
 def main():
-    # Sanal web sunucusunu ayri bir kanalda baslatıyoruz (Render uyumu icin)
     threading.Thread(target=run_flask, daemon=True).start()
-    
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_commands))
