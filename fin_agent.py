@@ -45,7 +45,6 @@ POPULAR_MARKETS = {
 def analyze_market_sync(ticker, timeframe='1d'):
     try:
         asset = yf.Ticker(ticker)
-        # Kararlılık için tüm verileri stabil 1d (Günlük) periyotta çekiyoruz
         df = asset.history(period='3mo', interval='1d')
         
         if df.empty or len(df) < 15:
@@ -72,7 +71,6 @@ def analyze_market_sync(ticker, timeframe='1d'):
         elif score <= -2: signal = "[STRONGSELL]"
         else: signal = "[NEUTRAL]"
         
-        # Matematiksel Önerilen Giriş Bölgesi Hesaplama Marjı (%0.3)
         entry_low = current_price * 0.997
         entry_high = current_price * 1.003
         
@@ -112,7 +110,6 @@ async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     
     loop = asyncio.get_event_loop()
     for ticker in POPULAR_MARKETS.keys():
-        # Her varlık biter bitmez bekletmeden anlık olarak telefona fırlatılıyor
         report_part = await loop.run_in_executor(None, analyze_market_sync, ticker, timeframe)
         await application.bot.send_message(chat_id=target_chat_id, text=report_part)
         await asyncio.sleep(0.5)
@@ -120,16 +117,16 @@ async def send_bulk_report(application, target_chat_id, timeframe='1d'):
 async def scheduled_morning_report(application):
     await send_bulk_report(application, MY_CHAT_ID, '1d')
 
+# 🎯 EN KRİTİK DÜZELTME: ID sorgulamalarını tamamen esnetip direkt sizin sabit numaranıza bağlıyoruz
 async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user_chat_id = update.message.chat_id
     
     if text == '/analiz_gunluk' or text == '/guncelle':
-        await send_bulk_report(context.application, user_chat_id, '1d')
+        await send_bulk_report(context.application, MY_CHAT_ID, '1d')
     elif text == '/analiz_haftalik':
-        await send_bulk_report(context.application, user_chat_id, '1wk')
+        await send_bulk_report(context.application, MY_CHAT_ID, '1wk')
     elif text == '/analiz_aylik':
-        await send_bulk_report(context.application, user_chat_id, '1mo')
+        await send_bulk_report(context.application, MY_CHAT_ID, '1mo')
 
 async def post_init(application: Application):
     scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
