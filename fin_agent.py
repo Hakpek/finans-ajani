@@ -3,15 +3,14 @@ import yfinance as yf
 import pandas as pd
 import ta
 import os
-import time
+import asyncio
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
-from apscheduler.schedulers.background import BackgroundScheduler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 import threading
 
-# Sadece kritik uyarıları görelim
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.WARNING)
 
 flask_app = Flask(__name__)
@@ -46,10 +45,11 @@ POPULAR_MARKETS = {
 def analyze_market_sync(ticker, timeframe='1d'):
     try:
         asset = yf.Ticker(ticker)
+        # Kilitlenmeleri onlemek icin sadece son 3 aylik veri setini senkron cekiyoruz
         df = asset.history(period='3mo', interval=timeframe)
         
         if df.empty or len(df) < 15:
-            return f"❌ {ticker}: Veri alinamadi.\n"
+            return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Veri alinamadi.\n"
         
         df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         df['MACD'] = ta.trend.macd(df['Close'])
@@ -94,59 +94,52 @@ def analyze_market_sync(ticker, timeframe='1d'):
         )
         return report
     except:
-        return f"❌ {ticker}: Analiz sirasinda hata olustu.\n"
+        return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Analiz sirasinda hata olustu.\n"
 
-def start(update: Update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['/analiz_gunluk', '/analiz_haftalik'], ['/analiz_aylik', '/guncelle']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    update.message.reply_text("HaPeFin Gelişmiş Finans Ajanına Hoş Geldiniz! İstediğiniz periyodu seçin:", reply_markup=reply_markup)
+    await update.message.reply_text("HaPeFin Gelişmiş Finans Ajanına Hoş Geldiniz! İstediğiniz periyodu seçin:", reply_markup=reply_markup)
 
-def send_bulk_report_sync(bot, target_chat_id, timeframe='1d'):
+# En modern v22.7 kuralina gore hazirlanmis tikanmayan raporlama mekanizmasi
+async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
-    bot.send_message(chat_id=target_chat_id, text=f"📊 HaPeFin {tf_labels[timeframe]} PİYASA RAPORU BAŞLADI...\n========================")
+    await application.bot.send_message(chat_id=target_chat_id, text=f"📊 HaPeFin {tf_labels[timeframe]} PİYASA RAPORU BAŞLADI...\n========================")
     
+    # Render'in islemciyi kilitlememesi icin her analizi kendi sirasinda guvenle basiyoruz
+    loop = asyncio.get_event_loop()
     for ticker in POPULAR_MARKETS.keys():
-        report_part = analyze_market_sync(ticker, timeframe)
-        bot.send_message(chat_id=target_chat_id, text=report_part)
-        time.sleep(0.5)
+        report_part = await loop.run_in_executor(None, analyze_market_sync, ticker, timeframe)
+        await application.bot.send_message(chat_id=target_chat_id, text=report_part)
+        await asyncio.sleep(1.0) # Her veri arasi 1 saniye nefes alma molasi
 
-def handle_commands(update: Update, context):
+async def scheduled_morning_report(application):
+    await send_bulk_report(application, MY_CHAT_ID, '1d')
+
+async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_chat_id = update.message.chat_id
-    bot = context.bot
     
     if text == '/analiz_gunluk' or text == '/guncelle':
-        send_bulk_report_sync(bot, user_chat_id, '1d')
+        await send_bulk_report(context.application, user_chat_id, '1d')
     elif text == '/analiz_haftalik':
-        send_bulk_report_sync(bot, user_chat_id, '1wk')
+        await send_bulk_report(context.application, user_chat_id, '1wk')
     elif text == '/analiz_aylik':
-        send_bulk_report_sync(bot, user_chat_id, '1mo')
+        await send_bulk_report(context.application, user_chat_id, '1mo')
 
-def scheduled_morning_report():
-    # Zamanlayıcı tetiklendiğinde bağımsız bir bot nesnesiyle doğrudan gönderim yapar
-    from telegram import Bot
-    bot = Bot(token=TELEGRAM_TOKEN)
-    send_bulk_report_sync(bot, MY_CHAT_ID, '1d')
+async def post_init(application: Application):
+    scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
+    scheduler.add_job(scheduled_morning_report, 'cron', hour=9, minute=0, args=[application])
+    scheduler.start()
 
 def main():
-    # Sanal Web Kapısını Başlat
     threading.Thread(target=run_flask, daemon=True).start()
-    
-    # Senkron Yapılandırıcı (Mevcut kütüphane versiyonunuzla tam uyumludur)
-    updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
-    
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_commands))
-    
-    # Klasik Senkron Zamanlayıcı (Sabah 09:00 Ayarı)
-    scheduler = BackgroundScheduler(timezone="Europe/Istanbul")
-    scheduler.add_job(scheduled_morning_report, 'cron', hour=9, minute=0)
-    scheduler.start()
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_commands))
     
     print("🤖 Finans Ajani Basariyla Aktif Edildi!")
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
 if __name__ == '__main__':
     main()
