@@ -44,9 +44,17 @@ POPULAR_MARKETS = {
 
 def analyze_market_sync(ticker, timeframe='1d'):
     try:
+        # Forex ve Kripto için zaman dilimini otomatik 4 saatliğe (4h) çekiyoruz
+        actual_tf = timeframe
+        if "X" in ticker or "USD" in ticker:
+            if timeframe == '1d': # Sadece günlük butonuna basıldığında daha hassas olması için 4h yapıyoruz
+                actual_tf = '4h'
+        
         asset = yf.Ticker(ticker)
-        # Kilitlenmeleri onlemek icin sadece son 3 aylik veri setini senkron cekiyoruz
-        df = asset.history(period='3mo', interval=timeframe)
+        # 4h verisi için son 1 aylık veri yeterlidir
+        period_len = '1mo' if actual_tf == '4h' else '3mo'
+        
+        df = asset.history(period=period_len, interval=actual_tf)
         
         if df.empty or len(df) < 15:
             return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Veri alinamadi.\n"
@@ -72,24 +80,36 @@ def analyze_market_sync(ticker, timeframe='1d'):
         elif score <= -2: signal = "[STRONGSELL]"
         else: signal = "[NEUTRAL]"
         
+        # SL/TP Marj Yönetimi
         if "BUY" in signal:
             sl = current_price * 0.95
             tp = current_price * 1.10
+            # Alım için en uygun bölge: Mevcut fiyat ile %0.3 altı arası
+            entry_low = current_price * 0.997
+            entry_high = current_price * 1.003
         elif "SELL" in signal:
             sl = current_price * 1.05
             tp = current_price * 0.90
+            # Satış için en uygun bölge: Mevcut fiyat ile %0.3 üstü arası
+            entry_low = current_price * 0.997
+            entry_high = current_price * 1.003
         else:
             sl = current_price * 0.97
             tp = current_price * 1.03
+            entry_low = current_price * 0.995
+            entry_high = current_price * 1.005
 
-        tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
+        tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK', '4h': '4 SAATLIK'}
+        show_tf = tf_labels.get(actual_tf, actual_tf)
+        
         report = (
             f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
-            f"Periyot: {tf_labels[timeframe]}\n"
-            f"Fiyat: {current_price:.4f}\n"
-            f"SINYAL: {signal}\n"
-            f"SL: {sl:.4f} | TP: {tp:.4f}\n"
-            f"RSI: {rsi:.2f}\n"
+            f"Periyot: {show_tf}\n"
+            f"Mevcut Fiyat: {current_price:.4f}\n"
+            f"🎯 Onerilen Giris Bolgesi: {entry_low:.4f} - {entry_high:.4f}\n"
+            f"📢 SINYAL: {signal}\n"
+            f"🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n"
+            f"📊 RSI: {rsi:.2f}\n"
             f"----------------------------------------"
         )
         return report
@@ -101,17 +121,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("HaPeFin Gelişmiş Finans Ajanına Hoş Geldiniz! İstediğiniz periyodu seçin:", reply_markup=reply_markup)
 
-# En modern v22.7 kuralina gore hazirlanmis tikanmayan raporlama mekanizmasi
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
-    await application.bot.send_message(chat_id=target_chat_id, text=f"📊 HaPeFin {tf_labels[timeframe]} PİYASA RAPORU BAŞLADI...\n========================")
+    await application.bot.send_message(chat_id=target_chat_id, text=f"📊 HaPeFin {tf_labels[timeframe]} PİYASA RAPORU BAŞLADI...\n(Forex/Kripto otomatik 4H taranir)\n========================")
     
-    # Render'in islemciyi kilitlememesi icin her analizi kendi sirasinda guvenle basiyoruz
     loop = asyncio.get_event_loop()
     for ticker in POPULAR_MARKETS.keys():
         report_part = await loop.run_in_executor(None, analyze_market_sync, ticker, timeframe)
         await application.bot.send_message(chat_id=target_chat_id, text=report_part)
-        await asyncio.sleep(1.0) # Her veri arasi 1 saniye nefes alma molasi
+        await asyncio.sleep(1.0)
 
 async def scheduled_morning_report(application):
     await send_bulk_report(application, MY_CHAT_ID, '1d')
