@@ -117,15 +117,15 @@ async def send_bulk_report(application, target_chat_id, timeframe='1d'):
 async def scheduled_morning_report(application):
     await send_bulk_report(application, MY_CHAT_ID, '1d')
 
-# 🎯 EN KRİTİK DÜZELTME: ID sorgulamalarını tamamen esnetip direkt sizin sabit numaranıza bağlıyoruz
+# 🎯 EN KRİTİK DÜZELTME: Hem buton metinlerini hem de direkt komutları yakalayacak esnek kontrol yapısı
 async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
-    if text == '/analiz_gunluk' or text == '/guncelle':
+    if text in ['/analiz_gunluk', 'analiz_gunluk', '/guncelle', 'guncelle']:
         await send_bulk_report(context.application, MY_CHAT_ID, '1d')
-    elif text == '/analiz_haftalik':
+    elif text in ['/analiz_haftalik', 'analiz_haftalik']:
         await send_bulk_report(context.application, MY_CHAT_ID, '1wk')
-    elif text == '/analiz_aylik':
+    elif text in ['/analiz_aylik', 'analiz_aylik']:
         await send_bulk_report(context.application, MY_CHAT_ID, '1mo')
 
 async def post_init(application: Application):
@@ -136,8 +136,10 @@ async def post_init(application: Application):
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_commands))
+    # Hem düz metinleri hem de eğik çizgili metinleri handle_commands fonksiyonuna yönlendiriyoruz
+    app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, handle_commands))
     
     print("🤖 Finans Ajani Basariyla Aktif Edildi!")
     app.run_polling()
