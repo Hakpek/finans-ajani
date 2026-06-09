@@ -12,7 +12,6 @@ from flask import Flask
 import threading
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.WARNING)
-
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
@@ -27,22 +26,14 @@ TELEGRAM_TOKEN = "8714335607:AAGt-nPJUsPPIGGmVeQzEnJi3mIbVNMluc0"
 MY_CHAT_ID = 965495144 
 
 POPULAR_MARKETS = {
-    "THYAO.IS": "Turk Hava Yollari",
-    "EREGL.IS": "Eregli Demir Celik",
-    "ASELS.IS": "Aselsan",
-    "XU100.IS": "BIST 100 Endeksi",
-    "AAPL": "Apple Stock",
-    "NVDA": "Nvidia Stock",
-    "^GSPC": "S&P 500 Endeksi",
-    "GC=F": "Altin ONS (Gold)",
-    "SI=F": "Gumus ONS (Silver)",
-    "BZ=F": "Brent Petrol (Oil)",
-    "^NDX": "Nasdaq 100 Endeksi",
-    "EURUSD=X": "EUR/USD Forex",
-    "USDTRY=X": "USD/TRY Forex",
-    "BTC-USD": "Bitcoin",
-    "ETH-USD": "Ethereum",
-    "SOL-USD": "Solana"
+    "THYAO.IS": "Turk Hava Yollari", "EREGL.IS": "Eregli Demir Celik",
+    "ASELS.IS": "Aselsan", "XU100.IS": "BIST 100 Endeksi",
+    "AAPL": "Apple Stock", "NVDA": "Nvidia Stock",
+    "^GSPC": "S&P 500 Endeksi", "GC=F": "Altin ONS (Gold)",
+    "SI=F": "Gumus ONS (Silver)", "BZ=F": "Brent Petrol (Oil)",
+    "^NDX": "Nasdaq 100 Endeksi", "EURUSD=X": "EUR/USD Forex",
+    "USDTRY=X": "USD/TRY Forex", "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum", "SOL-USD": "Solana"
 }
 
 FOREX_CONFIG = {
@@ -53,12 +44,10 @@ FOREX_CONFIG = {
     "BZ=F": {"pip_size": 0.01, "spread_pips": 3.0, "is_forex": True, "contract_size": 1000, "type": "commodity"},
     "^NDX": {"pip_size": 1.00, "spread_pips": 1.5, "is_forex": True, "contract_size": 10, "type": "index"}
 }
-
 def analyze_market_sync(ticker, timeframe='1d'):
     try:
         asset = yf.Ticker(ticker)
         df = asset.history(period='3mo', interval='1d')
-        
         if df.empty or len(df) < 15:
             return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Veri alinamadi.\n"
         
@@ -96,51 +85,55 @@ def analyze_market_sync(ticker, timeframe='1d'):
             if "BUY" in signal:
                 sl = current_price - (sl_pips * pip_size)
                 tp = current_price + (tp_pips * pip_size)
-                mt_type = "Piyasa Fiyatından AL (Market Buy)"
+                mt_type = "Piyasa Fiyatından AL (Buy by Market)"
+                is_tradable = True
             elif "SELL" in signal:
                 sl = current_price + (sl_pips * pip_size)
                 tp = current_price - (tp_pips * pip_size)
-                mt_type = "Piyasa Fiyatından SAT (Market Sell)"
+                mt_type = "Piyasa Fiyatından SAT (Sell by Market)"
+                is_tradable = True
             else:
-                sl = current_price - (atr * 1.5)
-                tp = current_price + (atr * 1.5)
-                sl_pips = (current_price - sl) / pip_size
-                mt_type = "İŞLEM YAPMAYIN (Beklemede kalın)"
+                is_tradable = False
                 
-            account_balance = 10000.0
-            risk_amount = account_balance * 0.01
-            try:
+            if is_tradable:
+                account_balance = 10000.0
+                risk_amount = account_balance * 0.01
+                try:
+                    if config["type"] == "fx":
+                        calculated_lot = risk_amount / (sl_pips * 10.0)
+                    elif config["type"] == "commodity":
+                        calculated_lot = risk_amount / (sl_pips * config["contract_size"] * pip_size)
+                    else:
+                        calculated_lot = risk_amount / (sl_pips * config["contract_size"])
+                    calculated_lot = max(min(calculated_lot, 5.0), 0.01)
+                except:
+                    calculated_lot = 0.01
+                    
+                leverage = 100
+                contract_size = config["contract_size"]
                 if config["type"] == "fx":
-                    calculated_lot = risk_amount / (sl_pips * 10.0)
-                elif config["type"] == "commodity":
-                    calculated_lot = risk_amount / (sl_pips * config["contract_size"] * pip_size)
+                    margin_cost = (contract_size * calculated_lot) / leverage
                 else:
-                    calculated_lot = risk_amount / (sl_pips * config["contract_size"])
-                calculated_lot = max(min(calculated_lot, 5.0), 0.01)
-            except:
-                calculated_lot = 0.01
+                    margin_cost = (contract_size * calculated_lot * current_price) / leverage
+                    
+                clean_ticker = ticker.replace("=X", "").replace("=F", "").replace("^", "")
+                sl_tp_text = f"🛑 SL (Zarar Durdur): {sl:.4f}\n🎯 TP (Kâr Al): {tp:.4f}\n"
+                lot_text = f"⚙️ Önerilen Hacim: {calculated_lot:.2f} Lot\n💰 Bu İşlemin Lot Maliyeti: ~{margin_cost:.2f} USD\n"
                 
-            leverage = 100
-            contract_size = config["contract_size"]
-            if config["type"] == "fx":
-                margin_cost = (contract_size * calculated_lot) / leverage
+                mt_guide = (
+                    f"----------------------------------------\n"
+                    f"🛠 METATRADER ADIM ADIM İŞLEM REHBERİ:\n"
+                    f"1. Parite Seçimi: MetaTrader'da '{clean_ticker}' bulun.\n"
+                    f"2. Emir Tipi: 'Piyasa Emri' (Market Execution) seçin.\n"
+                    f"3. Hacim (Lot): Ekrana tam olarak '{calculated_lot:.2f}' yazın.\n"
+                    f"4. Zarar Durdur (SL): Ekrana tam olarak '{sl:.4f}' yazın.\n"
+                    f"5. Kâr Al (TP): Ekrana tam olarak '{tp:.4f}' yazın.\n"
+                    f"6. Son Adım: Ekranda '{mt_type}' butonuna basın."
+                )
             else:
-                margin_cost = (contract_size * calculated_lot * current_price) / leverage
-                
-            margin_text = f"💰 Bu İşlemin Lot Maliyeti (Gerekli Teminat): ~{margin_cost:.2f} USD\n"
-            clean_ticker = ticker.replace("=X", "").replace("=F", "").replace("^", "")
-            
-            mt_guide = (
-                f"🛠 METATRADER ADIM ADIM İŞLEM REHBERİ:\n"
-                f"1. Parite Seçimi: MetaTrader'da '{clean_ticker}' bulun ve 'Yeni Emir' açın.\n"
-                f"2. Emir Tipi: 'Piyasa Emri' (Market Execution) seçin.\n"
-                f"3. Hacim (Lot): Ekrana tam olarak '{calculated_lot:.2f}' yazın.\n"
-                f"4. Zarar Durdur (SL): Ekrana tam olarak '{sl:.4f}' yazın.\n"
-                f"5. Kâr Al (TP): Ekrana tam olarak '{tp:.4f}' yazın.\n"
-                f"6. Son Adım: Ekranda '{mt_type}' butonuna basın."
-            )
-            sl_tp_text = f"🛑 SL (Zarar Durdur): {sl:.4f}\n🎯 TP (Kâr Al): {tp:.4f}\n"
-            lot_text = f"⚙️ Önerilen Hacim: {calculated_lot:.2f} Lot\n" + margin_text
+                sl_tp_text = ""
+                lot_text = ""
+                mt_guide = "⏳ PİYASA NOTU: Yön belirsiz. MetaTrader'da işlem açmayın, beklemede kalın."
         else:
             lot_text = ""
             mt_guide = ""
@@ -163,31 +156,24 @@ def analyze_market_sync(ticker, timeframe='1d'):
             f"💵 Giriş Fiyatı (Mevcut): {current_price:.4f}\n"
             + sl_tp_text + lot_text +
             f"📊 RSI Değeri: {rsi:.2f}\n"
-            f"----------------------------------------\n"
             + mt_guide
         )
         return report
     except Exception as e:
-        return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Analiz sırasında hata oluştu. ({str(e)})\n"
+        return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Hata olustu. ({str(e)})\n"
 
 def get_main_keyboard():
-    keyboard = [
-        ['📊 Günlük Analiz', '📈 Haftalık Analiz'],
-        ['📉 Aylık Analiz', '🔄 Sistemi Güncelle']
-    ]
+    keyboard = [['📊 Günlük Analiz', '📈 Haftalık Analiz'], ['📉 Aylık Analiz', '🔄 Sistemi Güncelle']]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = get_main_keyboard()
-    await update.message.reply_text(
-        "🤖 HaPeFin Finans Ajanına Hoş Geldiniz!\n\nYeni enstrümanlar ve Gelişmiş Lot Hesaplama Modülü kalıcı olarak aktif edildi.", 
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("🤖 HaPeFin Finans Ajanı Aktif!", reply_markup=reply_markup)
 
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
     reply_markup = get_main_keyboard()
-    await application.bot.send_message(chat_id=target_chat_id, text=f"📊 HaPeFin {tf_labels[timeframe]} PİYASA RAPORU BAŞLADI...\n========================", reply_markup=reply_markup)
+    await application.bot.send_message(chat_id=target_chat_id, text=f"📊 {tf_labels[timeframe]} PİYASA RAPORU BAŞLADI...\n==========", reply_markup=reply_markup)
     
     loop = asyncio.get_event_loop()
     for ticker in POPULAR_MARKETS.keys():
