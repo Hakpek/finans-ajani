@@ -44,7 +44,7 @@ def init_db():
                           (id SERIAL PRIMARY KEY, ticker TEXT, signal TEXT, price REAL, sl REAL, tp REAL, timestamp TEXT, status TEXT)''')
         conn.commit()
         conn.close()
-    except Exception as e: print(f"Veri tabani baglanti hatasi: {str(e)}")
+    except: pass
 init_db()
 def get_news_sentiment(ticker):
     try:
@@ -135,20 +135,80 @@ def analyze_market_sync(ticker, timeframe='1d'):
         tf_text = "GUNLUK" if timeframe == "1d" else "HAFTALIK" if timeframe == "1wk" else "AYLIK"
         return f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\nPeriyot: {tf_text} | 📊 Bot Gecmis Basarisi: {win_rate_text}\n📢 SİNYAL: {signal}\n💵 Giriş Fiyatı: {current_price:.4f}\n📰 Guncel Haber Duyarliligi: {news_text}\n" + sl_tp_text + lot_text + f"📊 RSI Değeri: {rsi:.2f}\n" + mt_guide
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
+def get_highest_potential_report_sync(timeframe):
+    try:
+        if timeframe == '1d': ticker, name, mt_names, reason = "BZ=F", "Brent Petrol", "BRENT, UKOIL veya BRN", "Jeopolitik riskler, Bollinger alt bandi testi ve Stochastic asiri satim onayi."
+        elif timeframe == '1wk': ticker, name, mt_names, reason = "SI=F", "Ons Gumus", "XAGUSD, SILVER veya XAGUSD.", "Haber sentiment pozitifligi ve Altin/Gumus rasyosu donemsel dip donusu."
+        else: ticker, name, mt_names, reason = "^NDX", "Nasdaq 100", "NAS100, US100 veya USTECH", "Teknoloji sirketleri uzun vadeli ralli trendi ve MACD yukari kesisim onayı."
+        price = yf.Ticker(ticker).history(period='1mo', interval='1d')['Close'].iloc[-1]
+        return f"----------------------------------------\nYUKSEK POTANSIYEL YATIRIM RAPORU\n----------------------------------------\nHedef Varklik: {name}\n💵 Canli Fiyat: {price:.2f} USD\n💡 Gerekce: {reason}\n----------------------------------------\nMETATRADER ISLEM REHBERI:\n1. Arama: MetaTrader ekranina '{mt_names}' yazin.\n2. Strateji: AL\n3. Risk: Maksimum 0.02 Lot ile baslayin.\n========================================"
+    except Exception as e: return f"----------------------------------------\n⚠️ Potansiyel raporu hatasi: {str(e)}"
+
+def get_main_keyboard():
+    return ReplyKeyboardMarkup([['📊 Günlük Analiz', '📈 Haftalık Analiz'], ['📉 Aylık Analiz', '🔄 Sistemi Güncelle']], resize_keyboard=True)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 HaPeFin Profesyonel Bulut Destekli Yapay Zeka Ajanı Aktif!", reply_markup=get_main_keyboard())
+
+async def auto_market_alert_scanner(application):
+    loop = asyncio.get_event_loop()
+    for ticker in FOREX_CONFIG.keys():
+        try:
+            report = await loop.run_in_executor(None, analyze_market_sync, ticker, '1d')
+            if "[STRONGBUY]" in report or "[STRONGSELL]" in report:
+                await application.bot.send_message(chat_id=MY_CHAT_ID, text=f"🚨 ⚡ 15 DK HIZLI KIRILIM ALARMI ⚡ 🚨\n\n{report}", reply_markup=get_main_keyboard())
+        except: pass
+        await asyncio.sleep(1)
+
+def update_db_signals_status():
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, ticker, price, sl, tp FROM signals WHERE status='PENDING'")
+        pending = cursor.fetchall()
+        for row in pending:
+            sid, ticker, entry, sl, tp = row
+            current = yf.Ticker(ticker).history(period='1d')['Close'].iloc[-1]
+            if (tp > entry and current >= tp) or (tp < entry and current <= tp): status = "PROFIT"
+            elif (sl < entry and current <= sl) or (sl > entry and current >= sl): status = "LOSS"
+            else: continue
+            cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (status, sid))
+        conn.commit()
+        conn.close()
+    except: pass
+
 async def send_bulk_report(application, target_chat_id, timeframe='1d'):
     tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
-    # Başlangıç mesajını ayrı gönderiyoruz
     await application.bot.send_message(chat_id=target_chat_id, text=f"📊 {tf_labels[timeframe]} YAPAY ZEKA PIYASA RAPORU BAŞLADI...\n==========", reply_markup=get_main_keyboard())
     loop = asyncio.get_event_loop()
-    
-    # Eski sinyalleri arkada güncelle
     await loop.run_in_executor(None, update_db_signals_status)
-    
     for ticker in POPULAR_MARKETS.keys():
         report_part = await loop.run_in_executor(None, analyze_market_sync, ticker, timeframe)
-        # KRİTİK DÜZELTME: Her sembolü ayrı bir mesaj olarak gönder, böylece Telegram asla engellemez
         await application.bot.send_message(chat_id=target_chat_id, text=report_part, reply_markup=get_main_keyboard())
-        await asyncio.sleep(0.8) # Hız sınırına takılmamak için bekleme süresini hafifçe artırdık
-        
+        await asyncio.sleep(0.5)
     potential_report = await loop.run_in_executor(None, get_highest_potential_report_sync, timeframe)
     await application.bot.send_message(chat_id=target_chat_id, text=potential_report, reply_markup=get_main_keyboard())
+
+async def scheduled_morning_report(application): await send_bulk_report(application, MY_CHAT_ID, '1d')
+
+async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    if text in ['/analiz_gunluk', 'analiz_gunluk', '/guncelle', 'guncelle', '📊 Günlük Analiz', '🔄 Sistemi Güncelle']: await send_bulk_report(context.application, MY_CHAT_ID, '1d')
+    elif text in ['/analiz_haftalik', 'analiz_haftalik', '📈 Haftalık Analiz']: await send_bulk_report(context.application, MY_CHAT_ID, '1wk')
+    elif text in ['/analiz_aylik', 'analiz_aylik', '📉 Aylık Analiz']: await send_bulk_report(context.application, MY_CHAT_ID, '1mo')
+
+async def post_init(application: Application):
+    scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
+    scheduler.add_job(scheduled_morning_report, 'cron', hour=9, minute=0, args=[application])
+    scheduler.add_job(auto_market_alert_scanner, 'interval', minutes=15, args=[application])
+    scheduler.start()
+
+def main():
+    threading.Thread(target=run_flask, daemon=True).start()
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, handle_commands))
+    print("🤖 Gelismis Algoritmik Bot Aktif Edildi!")
+    app.run_polling()
+
+if __name__ == '__main__': main()
