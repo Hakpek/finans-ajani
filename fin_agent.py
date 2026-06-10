@@ -9,10 +9,9 @@ logging.basicConfig(level=logging.WARNING)
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
-def home(): return "Maksimum Donanimli Finans Ajani Aktif!"
+def home(): return "Yapay Zeka Destekli Finans Ajani Aktif!"
 
-def run_flask():
-    flask_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+def run_flask(): flask_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
 TELEGRAM_TOKEN = "8714335607:AAGt-nPJUsPPIGGmVeQzEnJi3mIbVNMluc0"
 MY_CHAT_ID = 965495144 
@@ -38,177 +37,138 @@ DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhos
 
 def init_db():
     try:
-        conn = psycopg2.connect(DB_URL)
+        conn = psycopg2.connect(DB_URL, connect_timeout=5)
         cursor = conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS signals 
-                          (id SERIAL PRIMARY KEY, ticker TEXT, signal TEXT, price REAL, sl REAL, tp REAL, timestamp TEXT, status TEXT)''')
-        conn.commit()
-        conn.close()
+        cursor.execute("CREATE TABLE IF NOT EXISTS signals (id SERIAL PRIMARY KEY, ticker TEXT, signal TEXT, price REAL, sl REAL, tp REAL, timestamp TEXT, status TEXT)")
+        conn.commit(); conn.close()
     except: pass
 init_db()
+
 def get_news_sentiment(ticker):
     try:
-        news_list = yf.Ticker(ticker).news
-        if not news_list: return 0, "NOTR (Haber Yok)"
-        pos = ["bullish", "growth", "buy", "profit", "surge", "rate cut", "ralli", "kazanc"]
-        neg = ["bearish", "drop", "sell", "loss", "crash", "inflation", "rate hike", "risk", "gerilim", "dusus"]
-        score = 0
-        for n in news_list[:3]:
-            title = n.get('title', '').lower()
-            for w in pos:
-                if w in title: score += 1
-            for w in neg:
-                if w in title: score -= 1
-        if score > 0: return score, "POZITIF (Haber Destekli Yukselis)"
-        elif score < 0: return score, "NEGATIF (Haber Kaynakli Baski)"
-        return 0, "NOTR (Yatay Beklenti)"
-    except: return 0, "NOTR (Haber Alinamadi)"
-
+        news = yf.Ticker(ticker).news
+        if not news: return 0, "NOTR"
+        pos, neg, score = ["bullish", "growth", "buy", "profit", "surge"], ["bearish", "drop", "sell", "loss", "crash"], 0
+        for n in news[:3]:
+            t = n.get('title', '').lower()
+            score += sum(1 for w in pos if w in t) - sum(1 for w in neg if w in t)
+        return (score, "POZITIF") if score > 0 else (score, "NEGATIF") if score < 0 else (0, "NOTR")
+    except: return 0, "NOTR"
 def get_db_win_rate(ticker):
     try:
-        conn = psycopg2.connect(DB_URL)
-        cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status='PROFIT'", (ticker,))
-        wins = cursor.fetchone()
-        cursor.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IS NOT NULL AND status != 'PENDING'", (ticker,))
-        total = cursor.fetchone()
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status='PROFIT'", (ticker,))
+        w = cur.fetchone()[0]
+        cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IS NOT NULL AND status != 'PENDING'", (ticker,))
+        t = cur.fetchone()[0]
         conn.close()
-        if total == 0: return "Veri Yok (%0)"
-        return f"%{(wins/total)*100:.1f} Sinyal Basarisi"
-    except: return "Hesaplanamadi"
+        return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
+    except: return "Veri Yok (%0)"
+
 def analyze_market_sync(ticker, timeframe='1d'):
     try:
         df = yf.Ticker(ticker).history(period='3mo', interval='1d')
         if df.empty or len(df) < 20: return f"❌ {ticker}: Veri alinamadi.\n"
-        df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
+        df['RSI'] = ta.momentum.rsi(df['Close'])
         df['MACD'] = ta.trend.macd(df['Close'])
-        df['MACD_Signal'] = ta.trend.macd_signal(df['Close'])
-        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-        df['BB_High'] = ta.volatility.bollinger_hband(df['Close'], window=20, window_dev=2)
-        df['BB_Low'] = ta.volatility.bollinger_lband(df['Close'], window=20, window_dev=2)
-        df['STOCH_K'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'], window=14, smooth_window=3)
-        current_price = df['Close'].iloc[-1]
-        rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
-        macd, macd_sig = df['MACD'].iloc[-1], df['MACD_Signal'].iloc[-1]
-        bb_high, bb_low = df['BB_High'].iloc[-1], df['BB_Low'].iloc[-1]
-        stoch_k = df['STOCH_K'].iloc[-1] if not pd.isna(df['STOCH_K'].iloc[-1]) else 50.0
-        atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.005)
-        score = (1 if rsi < 30 else -1 if rsi > 70 else 0) + (1 if macd > macd_sig else -1) + (1 if current_price <= bb_low else -1 if current_price >= bb_high else 0) + (1 if stoch_k < 20 else -1 if stoch_k > 80 else 0)
-        news_score, news_text = get_news_sentiment(ticker)
-        score += (1 if news_score > 0 else -1 if news_score < 0 else 0)
-        signal = "[STRONGBUY]" if score >= 3 else "[BUY]" if score >= 1 else "[SELL]" if score <= -1 else "[STRONGSELL]" if score <= -3 else "[NEUTRAL]"
-        win_rate_text = get_db_win_rate(ticker)
-        config = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "spread_pips": 0, "is_forex": False})
-        if config["is_forex"]:
-            pip_size, atr_pips = config["pip_size"], atr / config["pip_size"]
-            sl_pips = max(atr_pips * 2.0, 15.0)
-            tp_pips = sl_pips * 1.5
-            if "BUY" in signal: sl, tp, mt_type, is_tradable = current_price - (sl_pips * pip_size), current_price + (tp_pips * pip_size), "Piyasa Fiyatindan AL (Buy by Market)", True
-            elif "SELL" in signal: sl, tp, mt_type, is_tradable = current_price + (sl_pips * pip_size), current_price - (tp_pips * pip_size), "Piyasa Fiyatindan SAT (Sell by Market)", True
-            else: is_tradable = False
-            if is_tradable:
+        df['MACD_S'] = ta.trend.macd_signal(df['Close'])
+        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'])
+        df['BB_H'] = ta.volatility.bollinger_hband(df['Close'])
+        df['BB_L'] = ta.volatility.bollinger_lband(df['Close'])
+        df['STOCH'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'])
+        p, rsi, macd, macd_s = df['Close'].iloc[-1], df['RSI'].iloc[-1], df['MACD'].iloc[-1], df['MACD_S'].iloc[-1]
+        bb_h, bb_l, stoch, atr = df['BB_H'].iloc[-1], df['BB_L'].iloc[-1], df['STOCH'].iloc[-1], df['ATR'].iloc[-1]
+        sc = (1 if rsi < 30 else -1 if rsi > 70 else 0) + (1 if macd > macd_s else -1) + (1 if p <= bb_l else -1 if p >= bb_h else 0) + (1 if stoch < 20 else -1 if stoch > 80 else 0)
+        n_sc, n_txt = get_news_sentiment(ticker)
+        sc += (1 if n_sc > 0 else -1 if n_sc < 0 else 0)
+        sig = "[STRONGBUY]" if sc >= 3 else "[BUY]" if sc >= 1 else "[SELL]" if sc <= -1 else "[STRONGSELL]" if sc <= -3 else "[NEUTRAL]"
+        wr = get_db_win_rate(ticker)
+        cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "spread_pips": 0, "is_forex": False})
+        if cfg["is_forex"]:
+            pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
+            sl_p = max(atr_p * 2.0, 15.0)
+            tp_p = sl_p * 1.5
+            if "BUY" in sig: sl, tp, mt, ok = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", True
+            elif "SELL" in sig: sl, tp, mt, ok = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", True
+            else: ok = False
+            if ok:
                 try:
-                    conn = psycopg2.connect(DB_URL)
-                    conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,%s)", (ticker, signal, current_price, sl, tp, datetime.now().strftime("%Y-%m-%d %H:%M"), "PENDING"))
-                    conn.commit()
-                    conn.close()
+                    conn = psycopg2.connect(DB_URL, connect_timeout=3)
+                    conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
+                    conn.commit(); conn.close()
                 except: pass
-                try:
-                    if config["type"] == "fx": calculated_lot = 100.0 / (sl_pips * 10.0)
-                    elif config["type"] == "commodity": calculated_lot = 100.0 / (sl_pips * config["contract_size"] * pip_size)
-                    else: calculated_lot = 100.0 / (sl_pips * config["contract_size"])
-                    calculated_lot = max(min(calculated_lot, 5.0), 0.01)
-                except: calculated_lot = 0.01
-                margin_cost = (config["contract_size"] * calculated_lot) / 100 if config["type"] == "fx" else (config["contract_size"] * calculated_lot * current_price) / 100
-                mt_name = ticker.replace("=X", "").replace("=F", "").replace("^", "")
-                mt_search_name = "XAUUSD (GOLD)" if mt_name == "GC" else "XAGUSD (SILVER)" if mt_name == "SI" else "BRENT (OIL)" if mt_name == "BZ" else "NAS100" if mt_name == "NDX" else mt_name
-                sl_tp_text = f"🛑 SL (Zarar Durdur): {sl:.4f}\n🎯 TP (Kar Al): {tp:.4f}\n"
-                lot_text = f"⚙️ Onerilen Hacim: {calculated_lot:.2f} Lot\n💰 Islem Maliyeti: ~{margin_cost:.2f} USD\n"
-                mt_guide = f"----------------------------------------\n🛠 METATRADER ISLEM REHBERI:\n1. Seçim: MetaTrader'da '{mt_search_name}' bulun.\n2. Tip: 'Piyasa Emri' secin.\n3. Hacim: '{calculated_lot:.2f}' lot yazin.\n4. SL: '{sl:.4f}' | 5. TP: '{tp:.4f}' yazin.\n6. Son Adım: Ekranda '{mt_type}' butonuna basın."
-            else: sl_tp_text, lot_text, mt_guide = "", "", "⏳ PİYASA NOTU: Yon belirsiz. MetaTrader'da islem acmayin, beklemede kalin."
-        else:
-            lot_text, mt_guide = "", ""
-            if "BUY" in signal: sl, tp = current_price * 0.95, current_price * 1.10
-            elif "SELL" in signal: sl, tp = current_price * 1.05, current_price * 0.90
-            else: sl, tp = current_price * 0.97, current_price * 1.03
-            sl_tp_text = f"🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n"
-        tf_text = "GUNLUK" if timeframe == "1d" else "HAFTALIK" if timeframe == "1wk" else "AYLIK"
-        return f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\nPeriyot: {tf_text} | 📊 Bot Gecmis Basarisi: {win_rate_text}\n📢 SİNYAL: {signal}\n💵 Giriş Fiyatı: {current_price:.4f}\n📰 Guncel Haber Duyarliligi: {news_text}\n" + sl_tp_text + lot_text + f"📊 RSI Değeri: {rsi:.2f}\n" + mt_guide
+                lot = max(min(100.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip if cfg["type"] == "commodity" else cfg["contract_size"])), 5.0), 0.01)
+                mc = (cfg["contract_size"] * lot) / 100 if cfg["type"] == "fx" else (cfg["contract_size"] * lot * p) / 100
+                tk = ticker.replace("=X", "").replace("=F", "").replace("^", "")
+                stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else "BRENT" if tk == "BZ" else "NAS100" if tk == "NDX" else tk
+                return f"📈 Sembol: {ticker}\nPeriyot: GUNLUK | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' bulun.\n2. Hacim: '{lot:.2f}' | SL: '{sl:.4f}' | TP: '{tp:.4f}' yazin.\n3. '{mt}' butonuna basin."
+            return f"📈 Sembol: {ticker}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n⏳ PİYASA NOTU: Yon belirsiz, islem acmayin."
+        sl, tp = (p * 0.95, p * 1.10) if "BUY" in sig else (p * 1.05, p * 0.90) if "SELL" in sig else (p * 0.97, p * 1.03)
+        return f"📈 Sembol: {ticker}\nPeriyot: GUNLUK | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n📊 RSI: {rsi:.2f}"
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
-def get_highest_potential_report_sync(timeframe):
+
+def get_highest_potential_report_sync(tf):
     try:
-        if timeframe == '1d': ticker, name, mt_names, reason = "BZ=F", "Brent Petrol", "BRENT, UKOIL veya BRN", "Jeopolitik riskler, Bollinger alt bandi testi ve Stochastic asiri satim onayi."
-        elif timeframe == '1wk': ticker, name, mt_names, reason = "SI=F", "Ons Gumus", "XAGUSD, SILVER veya XAGUSD.", "Haber sentiment pozitifligi ve Altin/Gumus rasyosu donemsel dip donusu."
-        else: ticker, name, mt_names, reason = "^NDX", "Nasdaq 100", "NAS100, US100 veya USTECH", "Teknoloji sirketleri uzun vadeli ralli trendi ve MACD yukari kesisim onayı."
-        price = yf.Ticker(ticker).history(period='1mo', interval='1d')['Close'].iloc[-1]
-        return f"----------------------------------------\nYUKSEK POTANSIYEL YATIRIM RAPORU\n----------------------------------------\nHedef Varklik: {name}\n💵 Canli Fiyat: {price:.2f} USD\n💡 Gerekce: {reason}\n----------------------------------------\nMETATRADER ISLEM REHBERI:\n1. Arama: MetaTrader ekranina '{mt_names}' yazin.\n2. Strateji: AL\n3. Risk: Maksimum 0.02 Lot ile baslayin.\n========================================"
-    except Exception as e: return f"----------------------------------------\n⚠️ Potansiyel raporu hatasi: {str(e)}"
+        tk, nm, mt = ("BZ=F", "Brent Petrol", "BRENT") if tf == '1d' else ("SI=F", "Ons Gumus", "XAGUSD") if tf == '1wk' else ("^NDX", "Nasdaq 100", "NAS100")
+        pr = yf.Ticker(tk).history(period='1mo')['Close'].iloc[-1]
+        return f"----------------------------------------\nYUKSEK POTANSIYEL YATIRIM RAPORU\n----------------------------------------\nVarlık: {nm} | Canli: {pr:.2f} USD\nRehber: MetaTrader ekranina '{mt}' yazip islem acin.\n========================================"
+    except: return "\nRapor hazirlanamadi."
 
-def get_main_keyboard():
-    return ReplyKeyboardMarkup([['📊 Günlük Analiz', '📈 Haftalık Analiz'], ['📉 Aylık Analiz', '🔄 Sistemi Güncelle']], resize_keyboard=True)
+def get_main_keyboard(): return ReplyKeyboardMarkup([['📊 Günlük Analiz', '📈 Haftalık Analiz'], ['📉 Aylık Analiz', '🔄 Sistemi Güncelle']], resize_keyboard=True)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🤖 HaPeFin Profesyonel Bulut Destekli Yapay Zeka Ajanı Aktif!", reply_markup=get_main_keyboard())
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE): await update.message.reply_text("🤖 HaPeFin Yapay Zeka Istasyonu Aktif!", reply_markup=get_main_keyboard())
 
-async def auto_market_alert_scanner(application):
-    loop = asyncio.get_event_loop()
+async def auto_market_alert_scanner(app):
     for ticker in FOREX_CONFIG.keys():
         try:
-            report = await loop.run_in_executor(None, analyze_market_sync, ticker, '1d')
-            if "[STRONGBUY]" in report or "[STRONGSELL]" in report:
-                await application.bot.send_message(chat_id=MY_CHAT_ID, text=f"🚨 ⚡ 15 DK HIZLI KIRILIM ALARMI ⚡ 🚨\n\n{report}", reply_markup=get_main_keyboard())
+            r = await asyncio.get_event_loop().run_in_executor(None, analyze_market_sync, ticker, '1d')
+            if "[STRONGBUY]" in r or "[STRONGSELL]" in r: await app.bot.send_message(chat_id=MY_CHAT_ID, text=f"🚨 ⚡ 15 DK KIRILIM ALARMI ⚡ 🚨\n\n{r}")
         except: pass
         await asyncio.sleep(1)
 
 def update_db_signals_status():
     try:
-        conn = psycopg2.connect(DB_URL)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, ticker, price, sl, tp FROM signals WHERE status='PENDING'")
-        pending = cursor.fetchall()
-        for row in pending:
-            sid, ticker, entry, sl, tp = row
-            current = yf.Ticker(ticker).history(period='1d')['Close'].iloc[-1]
-            if (tp > entry and current >= tp) or (tp < entry and current <= tp): status = "PROFIT"
-            elif (sl < entry and current <= sl) or (sl > entry and current >= sl): status = "LOSS"
-            else: continue
-            cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (status, sid))
-        conn.commit()
-        conn.close()
+        conn = psycopg2.connect(DB_URL, connect_timeout=3); cur = conn.cursor()
+        cur.execute("SELECT id, ticker, price, sl, tp FROM signals WHERE status='PENDING'")
+        for row in cur.fetchall():
+            sid, tk, ent, sl, tp = row
+            curr = yf.Ticker(tk).history(period='1d')['Close'].iloc[-1]
+            st = "PROFIT" if (tp > ent and curr >= tp) or (tp < ent and curr <= tp) else "LOSS" if (sl < ent and curr <= sl) or (sl > ent and curr >= sl) else "PENDING"
+            if st != "PENDING": cur.execute("UPDATE signals SET status=%s WHERE id=%s", (st, sid))
+        conn.commit(); conn.close()
     except: pass
 
-async def send_bulk_report(application, target_chat_id, timeframe='1d'):
-    tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
-    await application.bot.send_message(chat_id=target_chat_id, text=f"📊 {tf_labels[timeframe]} YAPAY ZEKA PIYASA RAPORU BAŞLADI...\n==========", reply_markup=get_main_keyboard())
+async def send_bulk_report(app, chat_id, tf):
+    await app.bot.send_message(chat_id=chat_id, text=f"📊 {tf.upper()} YAPAY ZEKA RAPORU BASLADI...\n==========")
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, update_db_signals_status)
     for ticker in POPULAR_MARKETS.keys():
-        report_part = await loop.run_in_executor(None, analyze_market_sync, ticker, timeframe)
-        await application.bot.send_message(chat_id=target_chat_id, text=report_part, reply_markup=get_main_keyboard())
-        await asyncio.sleep(0.5)
-    potential_report = await loop.run_in_executor(None, get_highest_potential_report_sync, timeframe)
-    await application.bot.send_message(chat_id=target_chat_id, text=potential_report, reply_markup=get_main_keyboard())
+        r = await loop.run_in_executor(None, analyze_market_sync, ticker, tf)
+        await app.bot.send_message(chat_id=chat_id, text=r)
+        await asyncio.sleep(0.6)
+    pot = await loop.run_in_executor(None, get_highest_potential_report_sync, tf)
+    await app.bot.send_message(chat_id=chat_id, text=pot)
 
-async def scheduled_morning_report(application): await send_bulk_report(application, MY_CHAT_ID, '1d')
+async def scheduled_morning_report(app): await send_bulk_report(app, MY_CHAT_ID, '1d')
 
 async def handle_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    if text in ['/analiz_gunluk', 'analiz_gunluk', '/guncelle', 'guncelle', '📊 Günlük Analiz', '🔄 Sistemi Güncelle']: await send_bulk_report(context.application, MY_CHAT_ID, '1d')
-    elif text in ['/analiz_haftalik', 'analiz_haftalik', '📈 Haftalık Analiz']: await send_bulk_report(context.application, MY_CHAT_ID, '1wk')
-    elif text in ['/analiz_aylik', 'analiz_aylik', '📉 Aylık Analiz']: await send_bulk_report(context.application, MY_CHAT_ID, '1mo')
+    t = update.message.text
+    if t in ['/analiz_gunluk', 'analiz_gunluk', '/guncelle', 'guncelle', '📊 Günlük Analiz', '🔄 Sistemi Güncelle']: await send_bulk_report(context.application, MY_CHAT_ID, '1d')
+    elif t in ['/analiz_haftalik', 'analiz_haftalik', '📈 Haftalık Analiz']: await send_bulk_report(context.application, MY_CHAT_ID, '1wk')
+    elif t in ['/analiz_aylik', 'analiz_aylik', '📉 Aylık Analiz']: await send_bulk_report(context.application, MY_CHAT_ID, '1mo')
 
-async def post_init(application: Application):
-    scheduler = AsyncIOScheduler(timezone="Europe/Istanbul")
-    scheduler.add_job(scheduled_morning_report, 'cron', hour=9, minute=0, args=[application])
-    scheduler.add_job(auto_market_alert_scanner, 'interval', minutes=15, args=[application])
-    scheduler.start()
+async def post_init(app: Application):
+    sched = AsyncIOScheduler(timezone="Europe/Istanbul")
+    sched.add_job(scheduled_morning_report, 'cron', hour=9, minute=0, args=[app])
+    sched.add_job(auto_market_alert_scanner, 'interval', minutes=15, args=[app])
+    sched.start()
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, handle_commands))
-    print("🤖 Gelismis Algoritmik Bot Aktif Edildi!")
     app.run_polling()
 
 if __name__ == '__main__': main()
