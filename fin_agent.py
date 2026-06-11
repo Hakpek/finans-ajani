@@ -24,14 +24,13 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 2. AYARLAR AND BINANCE SPOT PIYASASINDA %100 VAR OLAN PARİTELER
+# 2. AYARLAR VE PARİTELER
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
-# Hata riskini sıfırlamak için sadece Binance spotta kesin olan çiftleri seçtik
 MARKET_PAIRS = {
-    "EURUSDT": "EUR/USD Forex",
-    "GBPUSDT": "GBP/USD Forex",
+    "EURUSDT": "EUR-USD Forex",
+    "GBPUSDT": "GBP-USD Forex",
     "BTCUSDT": "Bitcoin",
     "ETHUSDT": "Ethereum",
     "SOLUSDT": "Solana"
@@ -41,12 +40,10 @@ MARKET_PAIRS = {
 async def fetch_market_data_async(symbol, name=""):
     async with aiohttp.ClientSession() as session:
         try:
-            # Doğrudan spot klines hattı
             url = f"https://binance.com{symbol}&interval=1d&limit=30"
             async with session.get(url, timeout=8) as response:
                 res = await response.json()
             
-            # Hatalı veya boş yanıt kontrolü
             if not res or (isinstance(res, dict) and "code" in res) or not isinstance(res, list):
                 return None
                 
@@ -56,7 +53,6 @@ async def fetch_market_data_async(symbol, name=""):
             df['High'] = df['High'].astype(float)
             df['Low'] = df['Low'].astype(float)
             
-            # İndikatör Hesaplamaları
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
             
@@ -64,7 +60,6 @@ async def fetch_market_data_async(symbol, name=""):
             rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
             atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.002)
             
-            # Sinyal Üretimi
             if rsi < 35: signal = "[STRONGBUY]"
             elif rsi < 45: signal = "[BUY]"
             elif rsi > 65: signal = "[STRONGSELL]"
@@ -75,7 +70,6 @@ async def fetch_market_data_async(symbol, name=""):
             entry_low = current_price - spread_buffer
             entry_high = current_price + spread_buffer
             
-            # 1000$ Bakiye Yönetimi (%1.5 Risk = Maksimum 15$ Zarar)
             demo_bakiye = 1000.0
             risk_tutari = demo_bakiye * 0.015
             
@@ -92,8 +86,7 @@ async def fetch_market_data_async(symbol, name=""):
             pips_at_risk = abs(current_price - sl)
             ideal_lot = 0.01
             if pips_at_risk > 0:
-                # 1000$ hesaba uygun mikro-lot ölçekleme formülü
-                if "USD" in symbol and symbol != "BTCUSDT" and symbol != "ETHUSDT" and symbol != "SOLUSDT":
+                if "USD" in symbol and symbol not in ["BTCUSDT", "ETHUSDT", "SOLUSDT"]:
                     ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))
                 else:
                     ideal_lot = max(0.01, round(risk_tutari / pips_at_risk, 4))
@@ -115,14 +108,15 @@ async def fetch_market_data_async(symbol, name=""):
 def build_report_string(data):
     if not data:
         return ""
+    # Karakter hatası vermemesi için Markdown yıldızları tamamen kaldırıldı
     return (
-        f"📈 **Sembol:** {data['ticker']} ({data['name']})\n"
+        f"Sembol: {data['ticker']} ({data['name']})\n"
         f"Mevcut Fiyat: {data['price']}\n"
-        f"🎯 Giriş Bölgesi: {data['entry']}\n"
-        f"📢 **SİNYAL:** {data['signal']}\n"
-        f"🛑 **SL:** {data['sl']} | 🎯 **TP:** {data['tp']}\n"
-        f"📊 RSI: {data['rsi']}\n"
-        f"💰 **Önerilen Pozisyon (1k$ / %1.5 Risk):** {data['lot']}\n"
+        f"Giris Bolgesi: {data['entry']}\n"
+        f"SINYAL: {data['signal']}\n"
+        f"SL: {data['sl']} | TP: {data['tp']}\n"
+        f"RSI: {data['rsi']}\n"
+        f"Onerilen Pozisyon (1k$ / %1.5 Risk): {data['lot']}\n"
         f"----------------------------------------\n"
     )
 
@@ -131,24 +125,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "Doğrulanan varlık listesiyle sistem çalışıyor. Analiz raporu almaya hazırsınız.",
+        "Finans Analiz Ajani Aktif!\n\nAnaliz raporu almaya hazırsınız.",
         reply_markup=reply_markup
     )
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == '📊 Günlük Analiz':
-        msg = await update.message.reply_text("🔄 Canlı veriler asenkron kanallardan çekiliyor, lütfen bekleyin...")
+        msg = await update.message.reply_text("Veriler asenkron kanallardan cekiliyor, lütfen bekleyin...")
         
-        full_report = "📊 **GÜNLÜK PİYASA ANALİZ RAPORU** 📊\n\n"
+        full_report = "GANLIK PIYASA ANALIZ RAPORU\n\n"
         
-        # Pariteleri güvenli sırayla tara ve metni birleştir
         for pair, name in MARKET_PAIRS.items():
             data = await fetch_market_data_async(pair, name=name)
             if data:
                 full_report += build_report_string(data)
 
-        await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report, parse_mode="Markdown")
+        # parse_mode kaldırıldı, böylece Telegram karakter hatası nedeniyle mesajı engellemeyecek
+        await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report)
         await context.bot.delete_message(chat_id=MY_CHAT_ID, message_id=msg.message_id)
 
 def main():
