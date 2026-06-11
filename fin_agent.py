@@ -24,29 +24,30 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 2. AYARLAR VE DOĞRULANMIŞ PARİTELER
+# 2. AYARLAR AND BINANCE SPOT PIYASASINDA %100 VAR OLAN PARİTELER
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
-# Yahoo engeline takılmayan, kararlı küresel borsanın likit veri hatları
+# Hata riskini sıfırlamak için sadece Binance spotta kesin olan çiftleri seçtik
 MARKET_PAIRS = {
     "EURUSDT": "EUR/USD Forex",
     "GBPUSDT": "GBP/USD Forex",
-    "USDJPYUSDT": "USD/JPY Forex",
     "BTCUSDT": "Bitcoin",
-    "ETHUSDT": "Ethereum"
+    "ETHUSDT": "Ethereum",
+    "SOLUSDT": "Solana"
 }
 
 # 3. KİLİTLENMEYEN ASENKRON VERİ MOTORU
 async def fetch_market_data_async(symbol, name=""):
     async with aiohttp.ClientSession() as session:
         try:
-            # Global API ağından kararlı geçmiş mum verisi çekimi (Asla engellenmez veya kilitlenmez)
+            # Doğrudan spot klines hattı
             url = f"https://binance.com{symbol}&interval=1d&limit=30"
             async with session.get(url, timeout=8) as response:
                 res = await response.json()
             
-            if not res or (isinstance(res, dict) and "code" in res):
+            # Hatalı veya boş yanıt kontrolü
+            if not res or (isinstance(res, dict) and "code" in res) or not isinstance(res, list):
                 return None
                 
             df = pd.DataFrame(res, columns=['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'AssetVolume', 'Trades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'])
@@ -55,7 +56,7 @@ async def fetch_market_data_async(symbol, name=""):
             df['High'] = df['High'].astype(float)
             df['Low'] = df['Low'].astype(float)
             
-            # Teknik Göstergelerin Hesaplanması
+            # İndikatör Hesaplamaları
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
             
@@ -63,7 +64,7 @@ async def fetch_market_data_async(symbol, name=""):
             rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
             atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.002)
             
-            # RSI Tabanlı Sinyal Analizi
+            # Sinyal Üretimi
             if rsi < 35: signal = "[STRONGBUY]"
             elif rsi < 45: signal = "[BUY]"
             elif rsi > 65: signal = "[STRONGSELL]"
@@ -74,7 +75,7 @@ async def fetch_market_data_async(symbol, name=""):
             entry_low = current_price - spread_buffer
             entry_high = current_price + spread_buffer
             
-            # 1000$ Bakiye Kuralları (%1.5 Risk = Maksimum 15$ Kayıp)
+            # 1000$ Bakiye Yönetimi (%1.5 Risk = Maksimum 15$ Zarar)
             demo_bakiye = 1000.0
             risk_tutari = demo_bakiye * 0.015
             
@@ -91,17 +92,20 @@ async def fetch_market_data_async(symbol, name=""):
             pips_at_risk = abs(current_price - sl)
             ideal_lot = 0.01
             if pips_at_risk > 0:
-                # 1000$ bakiye için mikro-lot ölçekleme
-                ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 10), 2))
+                # 1000$ hesaba uygun mikro-lot ölçekleme formülü
+                if "USD" in symbol and symbol != "BTCUSDT" and symbol != "ETHUSDT" and symbol != "SOLUSDT":
+                    ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))
+                else:
+                    ideal_lot = max(0.01, round(risk_tutari / pips_at_risk, 4))
 
             return {
                 "ticker": symbol.replace("USDT", ""),
                 "name": name,
-                "price": f"{current_price:.4f}" if "USD" in symbol else f"{current_price:.2f}",
-                "entry": f"{entry_low:.4f} - {entry_high:.4f}" if "USD" in symbol else f"{entry_low:.2f} - {entry_high:.2f}",
+                "price": f"{current_price:.5f}" if "EUR" in symbol or "GBP" in symbol else f"{current_price:.2f}",
+                "entry": f"{entry_low:.5f} - {entry_high:.5f}" if "EUR" in symbol or "GBP" in symbol else f"{entry_low:.2f} - {entry_high:.2f}",
                 "signal": signal,
-                "sl": f"{sl:.4f}" if "USD" in symbol else f"{sl:.2f}",
-                "tp": f"{tp:.4f}" if "USD" in symbol else f"{tp:.2f}",
+                "sl": f"{sl:.5f}" if "EUR" in symbol or "GBP" in symbol else f"{sl:.2f}",
+                "tp": f"{tp:.5f}" if "EUR" in symbol or "GBP" in symbol else f"{tp:.2f}",
                 "rsi": f"{rsi:.2f}",
                 "lot": f"{ideal_lot} Lot"
             }
@@ -128,7 +132,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "Yeni ve güvenli API altyapısı devrede. Veri takibi başladı.",
+        "Doğrulanan varlık listesiyle sistem çalışıyor. Analiz raporu almaya hazırsınız.",
         reply_markup=reply_markup
     )
 
@@ -138,7 +142,7 @@ async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_
         
         full_report = "📊 **GÜNLÜK PİYASA ANALİZ RAPORU** 📊\n\n"
         
-        # Tüm pariteleri kilitlemeden, arka planda güvenle tara ve raporu birleştir
+        # Pariteleri güvenli sırayla tara ve metni birleştir
         for pair, name in MARKET_PAIRS.items():
             data = await fetch_market_data_async(pair, name=name)
             if data:
