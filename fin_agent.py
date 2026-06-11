@@ -26,7 +26,7 @@ def run_flask():
 
 # 2. AYARLAR VE KESİNTİSİZ LİKİDİTE PARİTELERİ
 # !!! DIKKAT: BURAYA BOTFATHER'DAN ALDIĞINIZ EN YENİ TOKENI YAPIŞTIRIN !!!
-TELEGRAM_TOKEN = "BURAYA_YENI_TOKENINIZI_YAPISTIRIN"
+TELEGRAM_TOKEN = "B8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
 # Yahoo engeline takılmayan, Binance üzerindeki en likit forex/kripto fiyat endeksleri
