@@ -3,9 +3,8 @@ import yfinance as yf
 import pandas as pd
 import ta
 import os
-import asyncio
+import time  # Kilitlenmeyen zaman gecikmesi için eklendi
 import pytz
-import random  # Yahoo engeli aşmak için eklendi
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -48,17 +47,15 @@ POPULAR_MARKETS = {
     "XU100.IS": "BIST 100 Endeksi"
 }
 
-# 3. YAHHO FINANCE ENGELLERİNE KARŞI GÜÇLENDİRİLMİŞ ANALİZ MOTORU
-async def analyze_market_async(ticker, timeframe='1d'):
+# 3. KİLİTLENMEYE KARŞI GÜÇLENDİRİLMİŞ STANDART ANALİZ MOTORU
+def analyze_market_sync(ticker, timeframe='1d'):
     try:
-        # Yahoo Finance IP engellemesini aşmak için her istek öncesi 1-3 saniye arası rastgele bekleme
-        await asyncio.sleep(random.uniform(1.0, 3.0))
+        # İstekler arasında ağı yormamak için kısa bir mola
+        time.sleep(0.5)
         
-        # yfinance proxy veya session kısıtlamalarını aşmak için temiz kütüphane çağrısı
         asset = yf.Ticker(ticker)
-        
-        # Asenkron yapıda çalışırken engel yememek için kütüphanenin thread yönetimini optimize ediyoruz
-        df = await asyncio.to_thread(asset.history, period='3mo', interval='1d')
+        # Kilitlenmeyi önlemek için doğrudan standart history çağrısı yapıyoruz
+        df = asset.history(period='3mo', interval='1d')
         
         if df.empty or len(df) < 20:
             return None
@@ -101,7 +98,7 @@ async def analyze_market_async(ticker, timeframe='1d'):
         entry_high = current_price + spread_buffer
         
         demo_bakiye = 1000.0
-        risk_orani = 0.015  # %1.5 risk
+        risk_orani = 0.015  # %1.5 risk ($15)
         risk_tutari = demo_bakiye * risk_orani
         
         atr_multiplier_sl = 1.5
@@ -143,8 +140,7 @@ async def analyze_market_async(ticker, timeframe='1d'):
             "atr": f"{atr:.5f}",
             "lot": lot_onerisi if is_forex else "N/A"
         }
-    except Exception as e:
-        logging.error(f"Hata olustu {ticker}: {str(e)}")
+    except:
         return None
 
 def build_report_string(data):
@@ -152,19 +148,18 @@ def build_report_string(data):
         return ""
     report = (
         f"📈 **Sembol:** {data['ticker']} ({data['name']})\n"
-        f"Periyot: {data['timeframe']}\n"
         f"Mevcut Fiyat: {data['price']}\n"
-        f"🎯 Güvenli Giriş Bölgesi: {data['entry']}\n"
+        f"🎯 Giriş Bölgesi: {data['entry']}\n"
         f"📢 **SİNYAL:** {data['signal']}\n"
-        f"🛑 **SL (Stop):** {data['sl']} | 🎯 **TP (Kar):** {data['tp']}\n"
-        f"📊 RSI: {data['rsi']} | ATR (Volatilite): {data['atr']}\n"
+        f"🛑 **SL:** {data['sl']} | 🎯 **TP:** {data['tp']}\n"
+        f"📊 RSI: {data['rsi']} | ATR: {data['atr']}\n"
     )
     if data['lot'] != "N/A":
-        report += f"💰 **Önerilen Pozisyon (1k$ Bakiye / %1.5 Risk):** {data['lot']}\n"
+        report += f"💰 **Önerilen Pozisyon (1k$ / %1.5 Risk):** {data['lot']}\n"
     report += "----------------------------------------\n"
     return report
 
-# 4. BOT KOMUTLARI VE GÜVENLİ ASENKRON ZAMANLAYICILAR
+# 4. TELEGRAM BOT KOMUTLARI VE GÜVENLİ İŞLEYİCİLER
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -178,7 +173,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
     full_report = "🌅 **SABAH PİYASA ÖZETİ RAPORU (06:45)** 🌅\n\n"
     for ticker in POPULAR_MARKETS.keys():
-        data = await analyze_market_async(ticker, timeframe='1d')
+        # Kilitlenmeyi önlemek için ana iş parçacığı üzerinden çalıştırıyoruz
+        data = analyze_market_sync(ticker, timeframe='1d')
         if data and data != "LOW_LIQUIDITY":
             full_report += build_report_string(data) + "\n"
     await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report, parse_mode="Markdown")
@@ -186,7 +182,7 @@ async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
 async def scan_market_15min(context: ContextTypes.DEFAULT_TYPE):
     alert_report = ""
     for ticker in POPULAR_MARKETS.keys():
-        data = await analyze_market_async(ticker, timeframe='1d')
+        data = analyze_market_sync(ticker, timeframe='1d')
         if data and data != "LOW_LIQUIDITY":
             if data['signal'] in ["[STRONGBUY]", "[STRONGSELL]"]:
                 alert_report += "🚨 **GÜÇLÜ SİNYAL YAKALANDI** 🚨\n" + build_report_string(data) + "\n"
@@ -196,35 +192,39 @@ async def scan_market_15min(context: ContextTypes.DEFAULT_TYPE):
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == '📊 Günlük Analiz':
-        await update.message.reply_text("🔄 Tüm pariteler güvenli sırayla taranıyor, lütfen 15-20 saniye bekleyin...")
+        # Kullanıcı buton kilidini kırmak için ara mesajı güncelliyoruz
+        msg = await update.message.reply_text("🔄 Veriler çekiliyor, lütfen bekleyin...")
+        
         full_report = "📊 **ANLIK PİYASA ANALİZ RAPORU** 📊\n\n"
         for ticker in POPULAR_MARKETS.keys():
-            data = await analyze_market_async(ticker, timeframe='1d')
+            data = analyze_market_sync(ticker, timeframe='1d')
             if data == "LOW_LIQUIDITY":
                 full_report += f"⚠️ {ticker}: Düşük likidite dönemi. Sinyal üretilmedi.\n\n"
             elif data:
                 full_report += build_report_string(data) + "\n"
+        
         await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report, parse_mode="Markdown")
+        await context.bot.delete_message(chat_id=MY_CHAT_ID, message_id=msg.message_id)
 
 async def post_init(application: Application) -> None:
     job_queue = application.job_queue
     
-    # 15 dakikalık otomatik tarama
+    # 15 dakikalık arka plan tarayıcısı
     job_queue.run_repeating(
         scan_market_15min,
         interval=900,
-        first=15,  # Çakışmayı önlemek için bot açıldıktan 15 saniye sonra ilk tarama başlar
+        first=10,
         name="otomatik_15dk_tarama"
     )
     
-    # Sabah 06:45 raporu
+    # Her sabah 06:45 raporu
     target_time = datetime.strptime("06:45", "%H:%M").time()
     job_queue.run_daily(
         send_daily_analysis,
         time=target_time,
         name="sabah_ozeti_0645"
     )
-    logging.warning("🚀 Güvenli zamanlayıcı kalkanı başarıyla kuruldu.")
+    logging.warning("🚀 Güvenli senkron motor başarıyla devreye alındı.")
 
 # 5. ANA ÇALIŞTIRICI (MAIN)
 def main():
