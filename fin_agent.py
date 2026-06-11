@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.WARNING)
 flask_app = Flask(__name__)
 
 @flask_app.route('/')
-def home(): return "Yapay Zeka Destekli Finans Ajani Aktif!"
+def home(): return "Finans Ajani Calisiyor!"
 
 def run_flask(): flask_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
@@ -37,9 +37,8 @@ DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhos
 
 def init_db():
     try:
-        conn = psycopg2.connect(DB_URL, connect_timeout=5)
-        cursor = conn.cursor()
-        cursor.execute("CREATE TABLE IF NOT EXISTS signals (id SERIAL PRIMARY KEY, ticker TEXT, signal TEXT, price REAL, sl REAL, tp REAL, timestamp TEXT, status TEXT)")
+        conn = psycopg2.connect(DB_URL, connect_timeout=5); cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS signals (id SERIAL PRIMARY KEY, ticker TEXT, signal TEXT, price REAL, sl REAL, tp REAL, timestamp TEXT, status TEXT)")
         conn.commit(); conn.close()
     except: pass
 init_db()
@@ -56,12 +55,11 @@ def get_news_sentiment(ticker):
     except: return 0, "NOTR"
 def get_db_win_rate(ticker):
     try:
-        conn = psycopg2.connect(DB_URL, connect_timeout=3)
-        cur = conn.cursor()
+        conn = psycopg2.connect(DB_URL, connect_timeout=3); cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status='PROFIT'", (ticker,))
-        w = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IS NOT NULL AND status != 'PENDING'", (ticker,))
-        t = cur.fetchone()[0]
+        w = cur.fetchone()
+        cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IN ('PROFIT', 'LOSS')", (ticker,))
+        t = cur.fetchone()
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
@@ -87,15 +85,14 @@ def analyze_market_sync(ticker, timeframe='1d'):
         cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "spread_pips": 0, "is_forex": False})
         if cfg["is_forex"]:
             pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
-            sl_p = max(atr_p * 2.0, 15.0)
-            tp_p = sl_p * 1.5
+            sl_p = max(atr_p * 2.0, 15.0); tp_p = sl_p * 1.5
             if "BUY" in sig: sl, tp, mt, ok = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", True
             elif "SELL" in sig: sl, tp, mt, ok = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", True
             else: ok = False
             if ok:
                 try:
-                    conn = psycopg2.connect(DB_URL, connect_timeout=3)
-                    conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
+                    conn = psycopg2.connect(DB_URL, connect_timeout=3); cur = conn.cursor()
+                    cur.execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%Y-%m-%d %H:%M")))
                     conn.commit(); conn.close()
                 except: pass
                 lot = max(min(100.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip if cfg["type"] == "commodity" else cfg["contract_size"])), 5.0), 0.01)
@@ -107,63 +104,21 @@ def analyze_market_sync(ticker, timeframe='1d'):
         sl, tp = (p * 0.95, p * 1.10) if "BUY" in sig else (p * 1.05, p * 0.90) if "SELL" in sig else (p * 0.97, p * 1.03)
         return f"📈 Sembol: {ticker}\nPeriyot: GUNLUK | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n📊 RSI: {rsi:.2f}"
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
-
 def get_highest_potential_report_sync(tf):
     try:
-        if tf == '1d':
-            tk, nm, mt, rsn = "BZ=F", "Brent Petrol", "BRENT", "Bollinger alt bandi testi ve Stochastic asiri satim onayi."
-            is_buy = True
-        elif tf == '1wk':
-            tk, nm, mt, rsn = "SI=F", "Ons Gumus", "XAGUSD", "Haber sentiment pozitifligi ve Altin/Gumus rasyosu dip donusu."
-            is_buy = True
-        else:
-            tk, nm, mt, rsn = "^NDX", "Nasdaq 100", "NAS100", "Teknoloji sirketleri ralli trendi ve MACD yukari kesisim onayı."
-            is_buy = True
-            
-        # Canlı veriyi ve volatiliteyi (ATR) çekiyoruz
+        tk, nm, mt = ("BZ=F", "Brent Petrol", "BRENT") if tf == '1d' else ("SI=F", "Ons Gumus", "XAGUSD") if tf == '1wk' else ("^NDX", "Nasdaq 100", "NAS100")
         df = yf.Ticker(tk).history(period='3mo', interval='1d')
         p = df['Close'].iloc[-1]
         df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'])
         atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (p * 0.005)
-        
-        # Parite türüne göre özel Forex hesaplamaları
-        cfg = FOREX_CONFIG.get(tk, {"pip_size": 0.01, "contract_size": 1000})
-        pip, c_size = cfg["pip_size"], cfg["contract_size"]
-        sl_pips = max((atr / pip) * 2.0, 15.0)
-        tp_pips = sl_pips * 1.5
-        
-        sl = p - (sl_pips * pip) if is_buy else p + (sl_pips * pip)
-        tp = p + (tp_pips * pip) if is_buy else p - (tp_pips * pip)
-        
-        # Lot ve Marjin Teminat Maliyeti Hesabı
-        lot = max(min(100.0 / (sl_pips * (c_size * pip if tk == "SI=F" else c_size)), 5.0), 0.01)
-        mc = (c_size * lot * p) / 100
-        mt_btn = "Piyasa Fiyatindan AL (Buy)" if is_buy else "Piyasa Fiyatindan SAT (Sell)"
-        
-        return (
-            f"----------------------------------------\n"
-            f"🔥 ⭐ YÜKSEK POTANSİYEL YATIRIM RAPORU ⭐ 🔥\n"
-            f"----------------------------------------\n"
-            f"🎯 Hedef Varlık: {nm} ({mt})\n"
-            f"💵 Canlı Giriş Fiyatı: {p:.4f}\n"
-            f"💡 Gerekçe: {rsn}\n"
-            f"🛑 SL (Zarar Durdur): {sl:.4f}\n"
-            f"🎯 TP (Kâr Al): {tp:.4f}\n"
-            f"⚙️ Önerilen Hacim: {lot:.2f} Lot\n"
-            f"💰 Gerekli Teminat Maliyeti: ~{mc:.2f} USD\n"
-            f"----------------------------------------\n"
-            f"🛠️ METATRADER DETAYLI İŞLEM REHBERİ:\n"
-            f"1. Seçim: MetaTrader arama kısmına '{mt}' yazıp grafiği açın.\n"
-            f"2. Tip: 'Piyasa Emri' (Market Execution) seçin.\n"
-            f"3. Hacim (Lot): Kutucuğa tam olarak '{lot:.2f}' yazın.\n"
-            f"4. SL Alanı: Ekrana '{sl:.4f}' yazın.\n"
-            f"5. TP Alanı: Ekrana '{tp:.4f}' yazın.\n"
-            f"6. Son Adım: Ekranda '{mt_btn}' butonuna basın.\n"
-            f"========================================"
-        )
-    except Exception as e: 
-        return f"----------------------------------------\n⚠️ Potansiyel raporu hesaplanırken hata oluştu: {str(e)}"
-
+        cfg = FOREX_CONFIG.get(tk, {"pip_size": 0.01, "contract_size": 1000, "type": "commodity"})
+        pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
+        sl_p = max(atr_p * 2.0, 15.0); tp_p = sl_p * 1.5
+        sl, tp = p - (sl_p * pip), p + (tp_p * pip)
+        lot = max(min(100.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip)), 5.0), 0.01)
+        mc = (cfg["contract_size"] * lot * p) / 100
+        return f"----------------------------------------\n🔥 ⭐ YÜKSEK POTANSİYEL YATIRIM RAPORU ⭐ 🔥\n----------------------------------------\n🎯 Hedef Varlık: {nm} ({mt})\n💵 Canlı Giriş Fiyatı: {p:.4f}\n🛑 SL (Zarar Durdur): {sl:.4f}\n🎯 TP (Kâr Al): {tp:.4f}\n⚙️ Önerilen Hacim: {lot:.2f} Lot\n💰 Gerekli Teminat Maliyeti: ~{mc:.2f} USD\n----------------------------------------\n🛠️ METATRADER DETAYLI İŞLEM REHBERI:\n1. '{mt}' sembolunu bulun.\n2. Hacim: '{lot:.2f}', SL: '{sl:.4f}', TP: '{tp:.4f}' yazin.\n3. 'Buy by Market' butonuna basin.\n========================================"
+    except: return "\nRapor hazirlanamadi."
 
 def get_main_keyboard(): return ReplyKeyboardMarkup([['📊 Günlük Analiz', '📈 Haftalık Analiz'], ['📉 Aylık Analiz', '🔄 Sistemi Güncelle']], resize_keyboard=True)
 
@@ -173,32 +128,43 @@ async def auto_market_alert_scanner(app):
     for ticker in FOREX_CONFIG.keys():
         try:
             r = await asyncio.get_event_loop().run_in_executor(None, analyze_market_sync, ticker, '1d')
-            if "[STRONGBUY]" in r or "[STRONGSELL]" in r: await app.bot.send_message(chat_id=MY_CHAT_ID, text=f"🚨 ⚡ 15 DK KIRILIM ALARMI ⚡ 🚨\n\n{r}")
+            if "[STRONGBUY]" in r or "[STRONGSELL]" in r: await app.bot.send_message(chat_id=MY_CHAT_ID, text=f"🚨 ⚡ 15 DK KIRILIM ALARMI ⚡ 🚨\n\n{r}", reply_markup=get_main_keyboard())
         except: pass
         await asyncio.sleep(1)
 
 def update_db_signals_status():
     try:
-        conn = psycopg2.connect(DB_URL, connect_timeout=3); cur = conn.cursor()
-        cur.execute("SELECT id, ticker, price, sl, tp FROM signals WHERE status='PENDING'")
+        conn = psycopg2.connect(DB_URL, connect_timeout=5); cur = conn.cursor()
+        cur.execute("SELECT id, ticker, price, sl, tp, timestamp FROM signals WHERE status='PENDING'")
         for row in cur.fetchall():
-            sid, tk, ent, sl, tp = row
-            curr = yf.Ticker(tk).history(period='1d')['Close'].iloc[-1]
-            st = "PROFIT" if (tp > ent and curr >= tp) or (tp < ent and curr <= tp) else "LOSS" if (sl < ent and curr <= sl) or (sl > ent and curr >= sl) else "PENDING"
+            sid, tk, ent, sl, tp, ts = row
+            sig_date = ts.split(" ")[0]
+            df = yf.Ticker(tk).history(start=sig_date, interval='1d')
+            if df.empty or len(df) < 2: continue
+            highest_after = df['High'].max()
+            lowest_after = df['Low'].min()
+            st = "PENDING"
+            if tp > ent:
+                if highest_after >= tp: st = "PROFIT"
+                elif lowest_after <= sl: st = "LOSS"
+            else:
+                if lowest_after <= tp: st = "PROFIT"
+                elif highest_after >= sl: st = "LOSS"
             if st != "PENDING": cur.execute("UPDATE signals SET status=%s WHERE id=%s", (st, sid))
         conn.commit(); conn.close()
     except: pass
 
 async def send_bulk_report(app, chat_id, tf):
-    await app.bot.send_message(chat_id=chat_id, text=f"📊 {tf.upper()} YAPAY ZEKA RAPORU BASLADI...\n==========")
+    tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
+    await app.bot.send_message(chat_id=chat_id, text=f"📊 {tf_labels[tf]} YAPAY ZEKA RAPORU BASLADI...\n==========", reply_markup=get_main_keyboard())
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, update_db_signals_status)
     for ticker in POPULAR_MARKETS.keys():
         r = await loop.run_in_executor(None, analyze_market_sync, ticker, tf)
-        await app.bot.send_message(chat_id=chat_id, text=r)
+        await app.bot.send_message(chat_id=chat_id, text=r, reply_markup=get_main_keyboard())
         await asyncio.sleep(0.6)
     pot = await loop.run_in_executor(None, get_highest_potential_report_sync, tf)
-    await app.bot.send_message(chat_id=chat_id, text=pot)
+    await app.bot.send_message(chat_id=chat_id, text=pot, reply_markup=get_main_keyboard())
 
 async def scheduled_morning_report(app): await send_bulk_report(app, MY_CHAT_ID, '1d')
 
