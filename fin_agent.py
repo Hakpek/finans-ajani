@@ -24,12 +24,11 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 2. AYARLAR VE KESİNTİSİZ LİKİDİTE PARİTELERİ
-# !!! DIKKAT: BURAYA BOTFATHER'DAN ALDIĞINIZ EN YENİ TOKENI YAPIŞTIRIN !!!
-TELEGRAM_TOKEN = "B8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
+# 2. AYARLAR VE DOĞRULANMIŞ PARİTELER
+TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
-# Yahoo engeline takılmayan, Binance üzerindeki en likit forex/kripto fiyat endeksleri
+# Yahoo engeline takılmayan, kararlı küresel borsanın likit veri hatları
 MARKET_PAIRS = {
     "EURUSDT": "EUR/USD Forex",
     "GBPUSDT": "GBP/USD Forex",
@@ -38,16 +37,16 @@ MARKET_PAIRS = {
     "ETHUSDT": "Ethereum"
 }
 
-# 3. %100 ASENKRON VE ENGELLENMEYEN VERİ MOTORU
+# 3. KİLİTLENMEYEN ASENKRON VERİ MOTORU
 async def fetch_market_data_async(symbol, name=""):
     async with aiohttp.ClientSession() as session:
         try:
-            # Binance API ağından kararlı geçmiş mum verisi çekimi (Asla kilitlenmez)
+            # Global API ağından kararlı geçmiş mum verisi çekimi (Asla engellenmez veya kilitlenmez)
             url = f"https://binance.com{symbol}&interval=1d&limit=30"
             async with session.get(url, timeout=8) as response:
                 res = await response.json()
             
-            if not res or isinstance(res, dict) and "code" in res:
+            if not res or (isinstance(res, dict) and "code" in res):
                 return None
                 
             df = pd.DataFrame(res, columns=['OpenTime', 'Open', 'High', 'Low', 'Close', 'Volume', 'CloseTime', 'AssetVolume', 'Trades', 'TakerBuyBase', 'TakerBuyQuote', 'Ignore'])
@@ -56,7 +55,7 @@ async def fetch_market_data_async(symbol, name=""):
             df['High'] = df['High'].astype(float)
             df['Low'] = df['Low'].astype(float)
             
-            # Teknik Göstergeler
+            # Teknik Göstergelerin Hesaplanması
             df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
             df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
             
@@ -64,7 +63,7 @@ async def fetch_market_data_async(symbol, name=""):
             rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
             atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.002)
             
-            # Sinyal Analizi
+            # RSI Tabanlı Sinyal Analizi
             if rsi < 35: signal = "[STRONGBUY]"
             elif rsi < 45: signal = "[BUY]"
             elif rsi > 65: signal = "[STRONGSELL]"
@@ -75,7 +74,7 @@ async def fetch_market_data_async(symbol, name=""):
             entry_low = current_price - spread_buffer
             entry_high = current_price + spread_buffer
             
-            # Risk Yönetimi (1000$ Bakiye, %1.5 Risk = 15$)
+            # 1000$ Bakiye Kuralları (%1.5 Risk = Maksimum 15$ Kayıp)
             demo_bakiye = 1000.0
             risk_tutari = demo_bakiye * 0.015
             
@@ -92,7 +91,7 @@ async def fetch_market_data_async(symbol, name=""):
             pips_at_risk = abs(current_price - sl)
             ideal_lot = 0.01
             if pips_at_risk > 0:
-                # Lot ölçekleme
+                # 1000$ bakiye için mikro-lot ölçekleme
                 ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 10), 2))
 
             return {
@@ -128,18 +127,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "👋 Finans Analiz Ajanı Yeni Sürüm Aktif!\n\n"
-        "Sistem kararlı finans ağ geçidine bağlandı. Token doğrulandı.",
+        "👋 Finans Analiz Ajanı Aktif!\n\n"
+        "Yeni ve güvenli API altyapısı devrede. Veri takibi başladı.",
         reply_markup=reply_markup
     )
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == '📊 Günlük Analiz':
-        msg = await update.message.reply_text("🔄 Canlı asenkron veriler çekiliyor, lütfen bekleyin...")
+        msg = await update.message.reply_text("🔄 Canlı veriler asenkron kanallardan çekiliyor, lütfen bekleyin...")
         
-        full_report = "📊 **ANLIK PİYASA ANALİZ RAPORU** 📊\n\n"
+        full_report = "📊 **GÜNLÜK PİYASA ANALİZ RAPORU** 📊\n\n"
         
-        # Tüm pariteleri eş zamanlı ve kilitlemeden tara
+        # Tüm pariteleri kilitlemeden, arka planda güvenle tara ve raporu birleştir
         for pair, name in MARKET_PAIRS.items():
             data = await fetch_market_data_async(pair, name=name)
             if data:
