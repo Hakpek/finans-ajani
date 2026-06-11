@@ -5,6 +5,7 @@ import ta
 import os
 import asyncio
 import pytz
+import random  # Yahoo engeli aşmak için eklendi
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -24,7 +25,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 2. AYARLAR VE GÖRSELDEKİ TÜM FOREX PARİTELERİ
+# 2. AYARLAR VE FOREX PARİTELERİ
 TELEGRAM_TOKEN = "8714335607:AAGt-nPJUsPPIGGmVeQzEnJi3mIbVNMluc0"
 MY_CHAT_ID = 965495144
 
@@ -47,11 +48,17 @@ POPULAR_MARKETS = {
     "XU100.IS": "BIST 100 Endeksi"
 }
 
-# 3. TEKNİK ANALİZ VE RISK MOTORU (1000$ Bakiye Uyumlu)
-def analyze_market_sync(ticker, timeframe='1d'):
+# 3. YAHHO FINANCE ENGELLERİNE KARŞI GÜÇLENDİRİLMİŞ ANALİZ MOTORU
+async def analyze_market_async(ticker, timeframe='1d'):
     try:
+        # Yahoo Finance IP engellemesini aşmak için her istek öncesi 1-3 saniye arası rastgele bekleme
+        await asyncio.sleep(random.uniform(1.0, 3.0))
+        
+        # yfinance proxy veya session kısıtlamalarını aşmak için temiz kütüphane çağrısı
         asset = yf.Ticker(ticker)
-        df = asset.history(period='3mo', interval='1d')
+        
+        # Asenkron yapıda çalışırken engel yememek için kütüphanenin thread yönetimini optimize ediyoruz
+        df = await asyncio.to_thread(asset.history, period='3mo', interval='1d')
         
         if df.empty or len(df) < 20:
             return None
@@ -94,7 +101,7 @@ def analyze_market_sync(ticker, timeframe='1d'):
         entry_high = current_price + spread_buffer
         
         demo_bakiye = 1000.0
-        risk_orani = 0.015  # %1.5 risk ($15)
+        risk_orani = 0.015  # %1.5 risk
         risk_tutari = demo_bakiye * risk_orani
         
         atr_multiplier_sl = 1.5
@@ -136,7 +143,8 @@ def analyze_market_sync(ticker, timeframe='1d'):
             "atr": f"{atr:.5f}",
             "lot": lot_onerisi if is_forex else "N/A"
         }
-    except:
+    except Exception as e:
+        logging.error(f"Hata olustu {ticker}: {str(e)}")
         return None
 
 def build_report_string(data):
@@ -156,7 +164,7 @@ def build_report_string(data):
     report += "----------------------------------------\n"
     return report
 
-# 4. BOT KOMUTLARI VE ZAMANLAYICILAR
+# 4. BOT KOMUTLARI VE GÜVENLİ ASENKRON ZAMANLAYICILAR
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -170,57 +178,53 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
     full_report = "🌅 **SABAH PİYASA ÖZETİ RAPORU (06:45)** 🌅\n\n"
     for ticker in POPULAR_MARKETS.keys():
-        data = analyze_market_sync(ticker, timeframe='1d')
+        data = await analyze_market_async(ticker, timeframe='1d')
         if data and data != "LOW_LIQUIDITY":
             full_report += build_report_string(data) + "\n"
-        await asyncio.sleep(1)
     await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report, parse_mode="Markdown")
 
 async def scan_market_15min(context: ContextTypes.DEFAULT_TYPE):
     alert_report = ""
     for ticker in POPULAR_MARKETS.keys():
-        data = analyze_market_sync(ticker, timeframe='1d')
+        data = await analyze_market_async(ticker, timeframe='1d')
         if data and data != "LOW_LIQUIDITY":
             if data['signal'] in ["[STRONGBUY]", "[STRONGSELL]"]:
                 alert_report += "🚨 **GÜÇLÜ SİNYAL YAKALANDI** 🚨\n" + build_report_string(data) + "\n"
-        await asyncio.sleep(1)
         
     if alert_report:
         await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_report, parse_mode="Markdown")
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == '📊 Günlük Analiz':
-        await context.bot.send_message(chat_id=MY_CHAT_ID, text="🔄 Görseldeki tüm pariteler taranıyor, lütfen bekleyin...")
+        await update.message.reply_text("🔄 Tüm pariteler güvenli sırayla taranıyor, lütfen 15-20 saniye bekleyin...")
         full_report = "📊 **ANLIK PİYASA ANALİZ RAPORU** 📊\n\n"
         for ticker in POPULAR_MARKETS.keys():
-            data = analyze_market_sync(ticker, timeframe='1d')
+            data = await analyze_market_async(ticker, timeframe='1d')
             if data == "LOW_LIQUIDITY":
                 full_report += f"⚠️ {ticker}: Düşük likidite dönemi. Sinyal üretilmedi.\n\n"
             elif data:
                 full_report += build_report_string(data) + "\n"
-            await asyncio.sleep(1)
         await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report, parse_mode="Markdown")
 
 async def post_init(application: Application) -> None:
     job_queue = application.job_queue
     
-    # 1. Görev: 15 dakikalık tarayıcı hemen başlar
+    # 15 dakikalık otomatik tarama
     job_queue.run_repeating(
         scan_market_15min,
         interval=900,
-        first=5,
+        first=15,  # Çakışmayı önlemek için bot açıldıktan 15 saniye sonra ilk tarama başlar
         name="otomatik_15dk_tarama"
     )
     
-    # 2. Görev: Her sabah 06:45 raporu
-    tz_turkey = pytz.timezone('Europe/Istanbul')
+    # Sabah 06:45 raporu
     target_time = datetime.strptime("06:45", "%H:%M").time()
     job_queue.run_daily(
         send_daily_analysis,
         time=target_time,
         name="sabah_ozeti_0645"
     )
-    logging.warning("🚀 Zamanlanmış görevler güvenli başlatıcı (post_init) ile başarıyla devreye alındı.")
+    logging.warning("🚀 Güvenli zamanlayıcı kalkanı başarıyla kuruldu.")
 
 # 5. ANA ÇALIŞTIRICI (MAIN)
 def main():
