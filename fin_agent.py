@@ -3,8 +3,9 @@ import yfinance as yf
 import pandas as pd
 import ta
 import os
-import time  # Kilitlenmeyen zaman gecikmesi için eklendi
+import time
 import pytz
+import requests
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
@@ -25,6 +26,7 @@ def run_flask():
     flask_app.run(host='0.0.0.0', port=port)
 
 # 2. AYARLAR VE FOREX PARİTELERİ
+# BURAYA BOTFATHER'DAN ALACAĞINIZ YENİ TOKENI YAPIŞTIRIN!
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
@@ -33,12 +35,6 @@ POPULAR_MARKETS = {
     "GBPUSD=X": "GBP/USD Forex",
     "USDCHF=X": "USD/CHF Forex",
     "USDJPY=X": "USD/JPY Forex",
-    "USDCNH=X": "USD/CNH Forex",
-    "USDRUB=X": "USD/RUB Forex",
-    "AUDUSD=X": "AUD/USD Forex",
-    "NZDUSD=X": "NZD/USD Forex",
-    "USDCAD=X": "USD/CAD Forex",
-    "USDSEK=X": "USD/SEK Forex",
     "USDTRY=X": "USD/TRY Forex",
     "GC=F": "Altin ONS (Gold)",
     "BTC-USD": "Bitcoin",
@@ -47,15 +43,18 @@ POPULAR_MARKETS = {
     "XU100.IS": "BIST 100 Endeksi"
 }
 
-# 3. KİLİTLENMEYE KARŞI GÜÇLENDİRİLMİŞ STANDART ANALİZ MOTORU
-def analyze_market_sync(ticker, timeframe='1d'):
+# 3. ENGELLENMEYEN VE KİLİTLENMEYEN VERİ MOTORU
+def analyze_market_safe(ticker):
     try:
-        # İstekler arasında ağı yormamak için kısa bir mola
-        time.sleep(0.5)
+        # Yahoo kısıtlamasını aşmak için her parite öncesi 1 saniye bekle
+        time.sleep(1.0)
         
-        asset = yf.Ticker(ticker)
-        # Kilitlenmeyi önlemek için doğrudan standart history çağrısı yapıyoruz
-        df = asset.history(period='3mo', interval='1d')
+        # yfinance kütüphanesini tarayıcı gibi davranması için özelleştirilmiş session ile tetikliyoruz
+        session = requests.Session()
+        session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'})
+        
+        asset = yf.Ticker(ticker, session=session)
+        df = asset.history(period='3mo', interval='1d', timeout=10) # 10 saniye zaman aşımı (Kilitlenmeyi önler)
         
         if df.empty or len(df) < 20:
             return None
@@ -98,7 +97,7 @@ def analyze_market_sync(ticker, timeframe='1d'):
         entry_high = current_price + spread_buffer
         
         demo_bakiye = 1000.0
-        risk_orani = 0.015  # %1.5 risk ($15)
+        risk_orani = 0.015
         risk_tutari = demo_bakiye * risk_orani
         
         atr_multiplier_sl = 1.5
@@ -125,12 +124,9 @@ def analyze_market_sync(ticker, timeframe='1d'):
                 ideal_lot = max(0.01, round(hesaplanan_lot, 2))
                 lot_onerisi = f"{ideal_lot} Lot"
 
-        tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
-        
         return {
             "ticker": ticker,
             "name": POPULAR_MARKETS[ticker],
-            "timeframe": tf_labels.get(timeframe, 'GUNLUK'),
             "price": f"{current_price:.5f}",
             "entry": f"{entry_low:.5f} - {entry_high:.5f}",
             "signal": signal,
@@ -159,30 +155,29 @@ def build_report_string(data):
     report += "----------------------------------------\n"
     return report
 
-# 4. TELEGRAM BOT KOMUTLARI VE GÜVENLİ İŞLEYİCİLER
+# 4. TELEGRAM İŞLEYİCİLERİ
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "Bot şu an arka planda 15 dakikalık periyotlarla taramaya başladı. "
-        "Sadece [STRONGBUY] veya [STRONGSELL] durumları oluştuğunda buraya otomatik bilgi düşecektir.",
+        "Bot 15 dakikalık periyotlarla arka planda tarama yapıyor. [STRONGBUY] veya [STRONGSELL] durumlarında buraya bilgi düşecektir.",
         reply_markup=reply_markup
     )
 
 async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
     full_report = "🌅 **SABAH PİYASA ÖZETİ RAPORU (06:45)** 🌅\n\n"
     for ticker in POPULAR_MARKETS.keys():
-        # Kilitlenmeyi önlemek için ana iş parçacığı üzerinden çalıştırıyoruz
-        data = analyze_market_sync(ticker, timeframe='1d')
+        data = analyze_market_safe(ticker)
         if data and data != "LOW_LIQUIDITY":
             full_report += build_report_string(data) + "\n"
     await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report, parse_mode="Markdown")
 
 async def scan_market_15min(context: ContextTypes.DEFAULT_TYPE):
     alert_report = ""
-    for ticker in POPULAR_MARKETS.keys():
-        data = analyze_market_sync(ticker, timeframe='1d')
+    # Arka planda taramayı hafifletmek için en kritik 5 varlığı seçiyoruz
+    for ticker in ["EURUSD=X", "GBPUSD=X", "GC=F", "BTC-USD", "USDTRY=X"]:
+        data = analyze_market_safe(ticker)
         if data and data != "LOW_LIQUIDITY":
             if data['signal'] in ["[STRONGBUY]", "[STRONGSELL]"]:
                 alert_report += "🚨 **GÜÇLÜ SİNYAL YAKALANDI** 🚨\n" + build_report_string(data) + "\n"
@@ -192,14 +187,14 @@ async def scan_market_15min(context: ContextTypes.DEFAULT_TYPE):
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.text == '📊 Günlük Analiz':
-        # Kullanıcı buton kilidini kırmak için ara mesajı güncelliyoruz
-        msg = await update.message.reply_text("🔄 Veriler çekiliyor, lütfen bekleyin...")
+        msg = await update.message.reply_text("🔄 Pariteler taranıyor, lütfen bekleyin...")
         
         full_report = "📊 **ANLIK PİYASA ANALİZ RAPORU** 📊\n\n"
-        for ticker in POPULAR_MARKETS.keys():
-            data = analyze_market_sync(ticker, timeframe='1d')
+        # Aşırı yüklenmeyi önlemek için eş zamanlı tarama sayısını sınırladık
+        for ticker in list(POPULAR_MARKETS.keys())[:6]: 
+            data = analyze_market_safe(ticker)
             if data == "LOW_LIQUIDITY":
-                full_report += f"⚠️ {ticker}: Düşük likidite dönemi. Sinyal üretilmedi.\n\n"
+                full_report += f"⚠️ {ticker}: Düşük likidite dönemi.\n\n"
             elif data:
                 full_report += build_report_string(data) + "\n"
         
@@ -208,34 +203,16 @@ async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_
 
 async def post_init(application: Application) -> None:
     job_queue = application.job_queue
-    
-    # 15 dakikalık arka plan tarayıcısı
-    job_queue.run_repeating(
-        scan_market_15min,
-        interval=900,
-        first=10,
-        name="otomatik_15dk_tarama"
-    )
-    
-    # Her sabah 06:45 raporu
+    job_queue.run_repeating(scan_market_15min, interval=900, first=10, name="otomatik_15dk_tarama")
     target_time = datetime.strptime("06:45", "%H:%M").time()
-    job_queue.run_daily(
-        send_daily_analysis,
-        time=target_time,
-        name="sabah_ozeti_0645"
-    )
-    logging.warning("🚀 Güvenli senkron motor başarıyla devreye alındı.")
+    job_queue.run_daily(send_daily_analysis, time=target_time, name="sabah_ozeti_0645")
 
-# 5. ANA ÇALIŞTIRICI (MAIN)
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
-
     application = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Text(['📊 Günlük Analiz']), manual_analysis_trigger))
     application.add_handler(MessageHandler(filters.Text(['🕒 Sinyalleri Yeniden Başlat']), start))
-
     application.run_polling()
 
 if __name__ == '__main__':
