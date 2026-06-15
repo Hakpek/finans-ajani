@@ -51,19 +51,19 @@ POPULAR_MARKETS = {
     "AAPL": "Apple (US Stock)",
     "NVDA": "Nvidia (US Stock)",
 }
-def get_guide_note(signal, entry_low, entry_high, sl, tp):
+def get_guide_note(signal, entry_price, sl, tp):
     if "BUY" in signal:
         return (
-            f"Rehber: Fiyat {entry_low:.4f} - {entry_high:.4f} "
-            f"arasinda ALIM emri denenebilir. Fiyat {sl:.4f} "
-            f"altinda stop olmali, {tp:.4f} uzerinde kar "
+            f"Rehber: Fiyat {entry_price:.4f} seviyesine ulastiginda "
+            f"ALIM emri denenebilir. Fiyat {sl:.4f} altinda stop "
+            f"olmali, %5 kar getiren {tp:.4f} hedefinde kar "
             f"realize edilmelidir."
         )
     elif "SELL" in signal:
         return (
-            f"Rehber: Fiyat {entry_low:.4f} - {entry_high:.4f} "
-            f"arasinda SATIS emri denenebilir. Fiyat {sl:.4f} "
-            f"uzerinde stop olmali, {tp:.4f} altinda kar "
+            f"Rehber: Fiyat {entry_price:.4f} seviyesine ulastiginda "
+            f"SATIS emri denenebilir. Fiyat {sl:.4f} uzerinde stop "
+            f"olmali, %5 kar getiren {tp:.4f} hedefinde kar "
             f"realize edilmelidir."
         )
     else:
@@ -96,19 +96,19 @@ def analyze_market_sync(ticker, timeframe="1d"):
     elif rsi > 54: signal = "[SELL]"
     else: signal = "[NEUTRAL]"
 
-    entry_low = current_price * 0.998
-    entry_high = current_price * 1.002
+    entry_price = current_price  # Bölge aralığı tek rakama indirgendi
     risk_tutari = 15.0
 
+    # TP HEDEFLERİ %5 NET KAR ORANINA GÖRE SABİTLENDİ
     if "BUY" in signal:
         sl = current_price - (atr * 1.5)
-        tp = current_price + (atr * 3.0)
+        tp = current_price * 1.05  # Tam %5 yukarı hedef
     elif "SELL" in signal:
         sl = current_price + (atr * 1.5)
-        tp = current_price - (atr * 3.0)
+        tp = current_price * 0.95  # Tam %5 aşağı hedef
     else:
         sl = current_price * 0.99
-        tp = current_price * 1.02
+        tp = current_price * 1.01
 
     pips_at_risk = abs(current_price - sl)
     lot_onerisi = "0.01 Lot"
@@ -119,16 +119,16 @@ def analyze_market_sync(ticker, timeframe="1d"):
     tf_labels = {"1d": "GUNLUK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
     
     success_rate = round(random.uniform(76.5, 84.8), 1)
-    guide = get_guide_note(signal, entry_low, entry_high, sl, tp)
+    guide = get_guide_note(signal, entry_price, sl, tp)
     fmt = ".5f" if ticker in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
 
     report = (
         f" Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
         f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
         f"Mevcut Fiyat: {current_price:{fmt}}\n"
-        f" Onerilen Giris Bolgesi: {entry_low:{fmt}} - {entry_high:{fmt}}\n"
+        f" Onerilen Giris Fiyati: {entry_price:{fmt}}\n"
         f" SINYAL: {signal}\n"
-        f" SL: {sl:{fmt}} |  TP: {tp:{fmt}}\n"
+        f" SL: {sl:{fmt}} |  TP (%5 Hedef): {tp:{fmt}}\n"
         f" RSI: {rsi:.2f}\n"
         f" Sinyal Basari Orani: %{success_rate}\n"
     )
@@ -152,7 +152,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "• Mesaj parçalama kalkanı devrededir. Tüm veriler eksiksiz iletilir.\n"
+        "• Giriş fiyatı tek rakama indirgendi ve hedef karlar %5'e sabitlendi.\n"
         "• Her sabah saat 06:45'te günlük rapor iletilecektir.\n"
         "• Her 15 dakikada bir güçlü sinyaller taranacaktır.",
         reply_markup=reply_markup,
@@ -165,7 +165,6 @@ async def build_and_send_report(
     chat_id = target_chat_id if target_chat_id else MY_CHAT_ID
     tf_titles = {"1d": "GÜNLÜK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
 
-    # İlk mesaj başlığı gönderimi
     await context.bot.send_message(
         chat_id=chat_id, 
         text=f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU BAŞLADI 📊\n----------------------------------------"
@@ -184,7 +183,6 @@ async def build_and_send_report(
                 max_score = res["score"]
                 best_opportunity = res["name"]
             
-            # TELEGRAM 4096 SINIRI KORUMASI: Her 3 paritede bir mesajı bölüp gönderir
             if len(current_chunk) > 2500:
                 await context.bot.send_message(
                     chat_id=chat_id, 
@@ -192,9 +190,8 @@ async def build_and_send_report(
                 )
                 current_chunk = ""
                 msg_counter += 1
-                await asyncio.sleep(0.5) # Sunucu koruma molası
+                await asyncio.sleep(0.5)
 
-    # Kalan son pariteleri gönder
     if current_chunk:
         await context.bot.send_message(
             chat_id=chat_id, 
@@ -204,10 +201,9 @@ async def build_and_send_report(
     if not best_opportunity:
         best_opportunity = "EUR/USD Forex (Küresel Güçlü Korelasyon)"
 
-    # En yüksek kazanç potansiyeli alanını ayrı bir kapanış mesajı olarak atar
     final_note = (
         f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ 🔥\n"
-        f"Teknik analiz ve volatilite marjlarına göre "
+        f"Teknik analiz ve %5 kar hedeflerine göre "
         f"en yuksek getiri potansiyeli sunan arac: "
         f"**{best_opportunity}**\n"
         f"----------------------------------------"
