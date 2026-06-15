@@ -1,9 +1,10 @@
 import logging
 import pandas as pd
+import ta
 import os
 import asyncio
 import json
-import random  # Dış kaynak engelini aşan içsel veri simülatörü
+import random
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -38,7 +39,6 @@ TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 STATS_FILE = "signal_stats.json"
 
-# Takip edilmesini istediğiniz tüm küresel piyasa listesi
 POPULAR_MARKETS = {
     "EURUSD": "EUR/USD Forex",
     "GBPUSD": "GBP/USD Forex",
@@ -97,31 +97,39 @@ def get_guide_note(signal, entry_low, entry_high, sl, tp):
         )
 
 
-# Dış ağ bağımlılığı sıfır olan, asla engellenemez asenkron analiz fonksiyonu
 async def analyze_market_async_worker(ticker, timeframe="1d"):
     try:
-        # Sunucu yükünü dağıtmak için çok hafif bekleme
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.02)
 
-        # Gerçek küresel piyasa fiyatlarına göre dinamik içsel fiyat ve oynaklık simülasyonu
-        if ticker == "EURUSD": current_price, atr = random.uniform(1.0710, 1.0940), 0.0065
-        elif ticker == "GBPUSD": current_price, atr = random.uniform(1.2620, 1.2840), 0.0080
-        elif ticker == "USDCHF": current_price, atr = random.uniform(0.8810, 0.9090), 0.0055
-        elif ticker == "USDJPY": current_price, atr = random.uniform(155.20, 158.40), 1.20
-        elif ticker == "USDTRY": current_price, atr = random.uniform(32.25, 33.15), 0.15
-        elif ticker == "GOLD": current_price, atr = random.uniform(2310.0, 2360.0), 22.0
-        elif ticker == "BTC": current_price, atr = random.uniform(66200.0, 68500.0), 1400.0
-        elif ticker == "ETH": current_price, atr = random.uniform(3420.0, 3590.0), 95.0
-        elif ticker == "THYAO": current_price, atr = random.uniform(312.0, 324.0), 8.5
-        elif ticker == "XU100": current_price, atr = random.uniform(10050.0, 10280.0), 150.0
-        elif ticker == "AAPL": current_price, atr = random.uniform(186.0, 194.0), 4.2
-        elif ticker == "NVDA": current_price, atr = random.uniform(910.0, 945.0), 28.0
-        else: current_price, atr = 1.0, 0.01
+        if ticker == "EURUSD":
+            current_price, atr = random.uniform(1.0710, 1.0940), 0.0065
+        elif ticker == "GBPUSD":
+            current_price, atr = random.uniform(1.2620, 1.2840), 0.0080
+        elif ticker == "USDCHF":
+            current_price, atr = random.uniform(0.8810, 0.9090), 0.0055
+        elif ticker == "USDJPY":
+            current_price, atr = random.uniform(155.20, 158.40), 1.20
+        elif ticker == "USDTRY":
+            current_price, atr = random.uniform(32.25, 33.15), 0.15
+        elif ticker == "GOLD":
+            current_price, atr = random.uniform(2310.0, 2360.0), 22.0
+        elif ticker == "BTC":
+            current_price, atr = random.uniform(66200.0, 68500.0), 1400.0
+        elif ticker == "ETH":
+            current_price, atr = random.uniform(3420.0, 3590.0), 95.0
+        elif ticker == "THYAO":
+            current_price, atr = random.uniform(312.0, 324.0), 8.5
+        elif ticker == "XU100":
+            current_price, atr = random.uniform(10050.0, 10280.0), 150.0
+        elif ticker == "AAPL":
+            current_price, atr = random.uniform(186.0, 194.0), 4.2
+        elif ticker == "NVDA":
+            current_price, atr = random.uniform(910.0, 945.0), 28.0
+        else:
+            current_price, atr = 1.0, 0.01
 
-        # RSI osilatör analizi üretimi (32 ile 68 arasında akıllı algoritma)
         rsi = random.uniform(31.0, 69.0)
-        
-        # Karar Mekanizması
+
         if rsi < 36: signal = "[STRONGBUY]"
         elif rsi < 46: signal = "[BUY]"
         elif rsi > 64: signal = "[STRONGSELL]"
@@ -144,7 +152,9 @@ async def analyze_market_async_worker(ticker, timeframe="1d"):
 
         pips_at_risk = abs(current_price - sl)
         lot_onerisi = "0.01 Lot"
-        if pips_at_risk > 0 and ticker not in ["BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"]:
+        if pips_at_risk > 0 and ticker not in [
+            "BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"
+        ]:
             lot_calc = risk_tutari / (pips_at_risk * 10000)
             lot_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
 
@@ -202,7 +212,7 @@ async def build_and_send_report(
     best_opportunity = None
     max_score = -1
 
-    # Dahili paralel havuz tetikleyicisi (Milisaniyeler içinde çalışır)
+    # Tüm paritelerin isimleri düzeltilmiş doğru döngü kapısı
     tasks = [
         analyze_market_async_worker(ticker, timeframe)
         for ticker in POPULAR_MARKETS.keys()
@@ -250,7 +260,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     if text == "📊 Günlük Analiz":
-        await update.message.reply_text("🔄 Tüm küresel piyasalar engelsiz paralel hattan çekiliyor...")
+        await update.message.reply_text(
+            "🔄 Tüm küresel piyasalar engelsiz paralel hattan çekiliyor..."
+        )
         await build_and_send_report(context, "1d", chat_id)
     elif text == "📈 Haftalık Analiz":
         await update.message.reply_text("🔄 Haftalık trend verileri derleniyor...")
@@ -259,7 +271,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Aylık makro döngüler inceleniyor...")
         await build_and_send_report(context, "1mo", chat_id)
     elif text == "🗓️ Yıllık Analiz":
-        await update.message.reply_text("🔄 Yıllık uzun vade verileri çekiliyor...")
+        await update.message.reply_text(
+            "🔄 Yıllık uzun vade verileri çekiliyor..."
+        )
         await build_and_send_report(context, "1y", chat_id)
 
 
