@@ -34,7 +34,7 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port)
 
 
-TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
+TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 STATS_FILE = "signal_stats.json"
 
