@@ -23,7 +23,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# GÜVENLİ YENİ TOKEN VE CHAT ID BİLGİLERİNİZ
+# EN GÜVENLİ YENİ TOKEN BİLGİNİZ
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
@@ -49,7 +49,7 @@ def analyze_market_sync(ticker, timeframe='1d'):
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_Signal'] = ta.trend.macd_signal(df['Close'])
         
-        # Forex için volatilite tamponu (Sabit %5 durdurma yerine 1000$ bakiye koruması)
+        # Forex için risk tamponu (1000$ bakiye koruması)
         df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
         
         current_price = df['Close'].iloc[-1]
@@ -73,9 +73,9 @@ def analyze_market_sync(ticker, timeframe='1d'):
         entry_low = current_price * 0.997
         entry_high = current_price * 1.003
         
-        # 1000$ Bakiye Uyumlu Mikro Hesaplama Kuralları
+        # 1000$ Bakiye Uyumlu Risk Kuralları ($15 Maksimum Kayıp)
         demo_bakiye = 1000.0
-        risk_tutari = demo_bakiye * 0.015  # %1.5 bakiye riski ($15)
+        risk_tutari = demo_bakiye * 0.015
         
         if "BUY" in signal:
             sl = current_price - (atr * 1.5)
