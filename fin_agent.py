@@ -23,19 +23,24 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# EN GÜVENLİ YENİ TOKEN BİLGİNİZ
+# 11 HAZİRAN SONRASI GÜVENLİĞE ALDIĞIMIZ YENİ TOKEN BİLGİLERİNİZ
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
 POPULAR_MARKETS = {
-    "EURUSD=X": "EUR/USD Forex",
-    "GBPUSD=X": "GBP/USD Forex",
-    "USDJPY=X": "USD/JPY Forex",
+    "THYAO.IS": "Turk Hava Yollari",
+    "EREGL.IS": "Eregli Demir Celik",
+    "ASELS.IS": "Aselsan",
+    "XU100.IS": "BIST 100 Endeksi",
+    "AAPL": "Apple Stock",
+    "NVDA": "Nvidia Stock",
+    "^GSPC": "S&P 500 Endeksi",
     "GC=F": "Altin ONS (Gold)",
+    "EURUSD=X": "EUR/USD Forex",
+    "USDTRY=X": "USD/TRY Forex",
     "BTC-USD": "Bitcoin",
     "ETH-USD": "Ethereum",
-    "THYAO.IS": "Turk Hava Yollari",
-    "XU100.IS": "BIST 100 Endeksi"
+    "SOL-USD": "Solana"
 }
 
 def analyze_market_sync(ticker, timeframe='1d'):
@@ -49,52 +54,46 @@ def analyze_market_sync(ticker, timeframe='1d'):
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_Signal'] = ta.trend.macd_signal(df['Close'])
         
-        # Forex için risk tamponu (1000$ bakiye koruması)
-        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
-        
         current_price = df['Close'].iloc[-1]
         rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
         macd = df['MACD'].iloc[-1] if not pd.isna(df['MACD'].iloc[-1]) else 0.0
         macd_sig = df['MACD_Signal'].iloc[-1] if not pd.isna(df['MACD_Signal'].iloc[-1]) else 0.0
-        atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.002)
         
         score = 0
-        if rsi < 30: score += 1
-        elif rsi > 70: score -= 1
-        if macd > macd_sig: score += 1
-        else: score -= 1
-        
-        if score >= 2: signal = "[STRONGBUY]"
-        elif score == 1: signal = "[BUY]"
-        elif score == -1: signal = "[SELL]"
-        elif score <= -2: signal = "[STRONGSELL]"
-        else: signal = "[NEUTRAL]"
-        
+        if rsi < 30:
+            score += 1
+        elif rsi > 70:
+            score -= 1
+            
+        if macd > macd_sig:
+            score += 1
+        else:
+            score -= 1
+            
+        if score >= 2:
+            signal = "[STRONGBUY]"
+        elif score == 1:
+            signal = "[BUY]"
+        elif score == -1:
+            signal = "[SELL]"
+        elif score <= -2:
+            signal = "[STRONGSELL]"
+        else:
+            signal = "[NEUTRAL]"
+            
         entry_low = current_price * 0.997
         entry_high = current_price * 1.003
         
-        # 1000$ Bakiye Uyumlu Risk Kuralları ($15 Maksimum Kayıp)
-        demo_bakiye = 1000.0
-        risk_tutari = demo_bakiye * 0.015
-        
         if "BUY" in signal:
-            sl = current_price - (atr * 1.5)
-            tp = current_price + (atr * 3.0)
+            sl = current_price * 0.95
+            tp = current_price * 1.10
         elif "SELL" in signal:
-            sl = current_price + (atr * 1.5)
-            tp = current_price - (atr * 3.0)
+            sl = current_price * 1.05
+            tp = current_price * 0.90
         else:
             sl = current_price * 0.97
             tp = current_price * 1.03
             
-        pips_at_risk = abs(current_price - sl)
-        lot_onerisi = "0.01 Lot"
-        if pips_at_risk > 0:
-            if ticker.endswith("=X"):
-                lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100000), 2))} Lot"
-            elif ticker == "GC=F":
-                lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))} Lot"
-
         tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
         report = (
             f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
@@ -104,11 +103,8 @@ def analyze_market_sync(ticker, timeframe='1d'):
             f"📢 SINYAL: {signal}\n"
             f"🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n"
             f"📊 RSI: {rsi:.2f}\n"
+            f"----------------------------------------"
         )
-        if ticker.endswith("=X") or ticker == "GC=F":
-            report += f"💰 Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
-            
-        report += f"----------------------------------------"
         return report
     except:
         return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Analiz sirasinda hata olustu.\n"
@@ -118,7 +114,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanina Hos Geldiniz!\n\n"
-        "Sistem calisan ilk kararli versiyonuna basariyla geri donduruldu.",
+        "Sistem 11 Haziran tarihindeki orijinal ve kararli versiyonuna basariyla geri donduruldu.",
         reply_markup=reply_markup
     )
 
@@ -140,14 +136,13 @@ async def set_auto_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for job in current_jobs:
         job.schedule_removal()
         
-    # Otomatik rapor saati talebiniz dogrultusunda sabah 06:45 olarak ayarlandi
     context.job_queue.run_daily(
         send_daily_analysis, 
-        time=datetime.strptime("06:45", "%H:%M").time(), 
+        time=datetime.strptime("09:00", "%H:%M").time(), 
         context=chat_id, 
         name=str(chat_id)
     )
-    await update.message.reply_text("🔔 Otomatik sinyaller acildi! Her gun saat 06:45'te rapor iletilecek.")
+    await update.message.reply_text("🔔 Otomatik sinyaller acildi! Her gun TSİ 09:00'da rapor iletilecek.")
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
