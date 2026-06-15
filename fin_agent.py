@@ -52,7 +52,7 @@ POPULAR_MARKETS = {
     "AAPL": "Apple (US Stock)",
     "NVDA": "Nvidia (US Stock)",
 }
-def get_guide_note(signal, entry, sl, tp, label, target_p):
+def get_guide_note(signal, entry, sl, tp, target_p):
     if "BUY" in signal:
         return (
             f"Rehber: Fiyat {entry:.4f} seviyesinde ALIM emri "
@@ -69,8 +69,8 @@ def get_guide_note(signal, entry, sl, tp, label, target_p):
         )
     else:
         return (
-            f"Rehber: Mevcut parite belirsiz bölgede (NEUTRAL). "
-            f"Yeni bir trend kirilimi gelene kadar beklenmelidir."
+            "Rehber: Mevcut parite belirsiz bölgede (NEUTRAL). "
+            "Yeni bir trend kirilimi gelene kadar beklenmelidir."
         )
 
 
@@ -98,11 +98,10 @@ def analyze_market_sync(ticker, timeframe="1d"):
     else: signal = "[NEUTRAL]"
 
     entry_price = current_price
-    risk_tutari = 15.0  # 1000$'ın %1.5'i
+    risk_tutari = 15.0
 
-    # Periyot Bazlı Kâr Hedef Katsayılarının Eşlenmesi
     p_targets = {"1d": 5, "1wk": 15, "1mo": 20, "1y": 100}
-    target_pct = p_map = p_targets.get(timeframe, 5)
+    target_pct = p_targets.get(timeframe, 5)
     katsayi = target_pct / 100.0
 
     if "BUY" in signal:
@@ -116,18 +115,16 @@ def analyze_market_sync(ticker, timeframe="1d"):
         tp = current_price * (1.0 + katsayi)
 
     pips_at_risk = abs(current_price - sl)
-    hisse_adet_onerisi = "N/A"
+    hisse_adet_onerisi = "0.01 Lot"
     
     if pips_at_risk > 0:
-        if ticker.endswith("=X") or ticker in ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "USDTRY"]:
-            # Forex için standart Lot hesaplama
+        if ticker in ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "USDTRY"]:
             lot_calc = risk_tutari / (pips_at_risk * 10000)
             hisse_adet_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
         elif ticker == "GOLD":
             lot_calc = risk_tutari / (pips_at_risk * 100)
             hisse_adet_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
         else:
-            # Hisse senedi ve Kriptolar için 1000$ bakiye uyumlu net Adet hesaplama
             if ticker in ["BTC", "ETH"]:
                 hisse_adet_onerisi = f"{round(risk_tutari / pips_at_risk, 4)} Adet"
             else:
@@ -135,7 +132,7 @@ def analyze_market_sync(ticker, timeframe="1d"):
 
     tf_labels = {"1d": "GUNLUK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
     success_rate = round(random.uniform(76.5, 84.8), 1)
-    guide = get_guide_note(signal, entry_price, sl, tp, target_pct, target_pct)
+    guide = get_guide_note(signal, entry_price, sl, tp, target_pct)
     fmt = ".5f" if ticker in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
 
     report = (
@@ -145,7 +142,7 @@ def analyze_market_sync(ticker, timeframe="1d"):
         f" Onerilen Giris Fiyati: {entry_price:{fmt}}\n"
         f" SINYAL: {signal}\n"
         f" SL: {sl:{fmt}} |  TP (%{target_pct} Hedef): {tp:{fmt}}\n"
-        f" RSI: {ticker_rsi if 'ticker_rsi' in locals() else rsi:.2f}\n"
+        f" RSI: {rsi:.2f}\n"
         f" Sinyal Basari Orani: %{success_rate}\n"
         f" 💰 Alınması Gereken Miktar (1k$): {hisse_adet_onerisi}\n"
     )
@@ -153,9 +150,15 @@ def analyze_market_sync(ticker, timeframe="1d"):
 
     return {
         "text": report,
-        "score": 2 if "STRONG" in signal else 1,
+        "score": 3 if "STRONG" in signal else 1,
         "signal": signal,
         "name": POPULAR_MARKETS[ticker],
+        "price": f"{current_price:{fmt}}",
+        "sl": f"{sl:{fmt}}",
+        "tp": f"{tp:{fmt}}",
+        "qty": hisse_adet_onerisi,
+        "guide": guide,
+        "target_pct": target_pct
     }
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -166,8 +169,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
+        "• En yüksek kazanç potansiyeli alanına SL, TP ve Rehber eklenmiştir.\n"
         "• Günlük: %5 | Haftalık: %15 | Aylık: %20 | Yıllık: %100 Kâr hedefleri.\n"
-        "• 1000$ bakiye için tam alınması gereken Adet/Lot bilgileri eklenmiştir.\n"
         "• Her sabah saat 06:45'te günlük rapor otomatik iletilecektir.",
         reply_markup=reply_markup,
     )
@@ -193,9 +196,10 @@ async def build_and_send_report(
         res = analyze_market_sync(ticker, timeframe)
         if res:
             current_chunk += res["text"] + "\n\n"
-            if "STRONG" in res["signal"] and res["score"] > max_score:
+            # En güçlü ve potansiyeli yüksek sinyali hafızaya alır
+            if res["score"] > max_score or (res["score"] == max_score and best_opportunity is None):
                 max_score = res["score"]
-                best_opportunity = res["name"]
+                best_opportunity = res
             
             if len(current_chunk) > 2500:
                 await context.bot.send_message(
@@ -212,16 +216,23 @@ async def build_and_send_report(
             text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
         )
 
-    if not best_opportunity:
-        best_opportunity = "EUR/USD Forex (Küresel Güçlü Korelasyon)"
+    # EN YÜKSEK KAZANÇ POTANSİYELİ KARTININ TÜM DETAYLARLA BİRLİKTE OLUŞTURULMASI
+    if best_opportunity:
+        final_note = (
+            f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ RAPORU 🔥\n\n"
+            f"Teknik osilatör kırılımları ve kâr marjlarına göre "
+            f"en yüksek getiri sunan varlık: {best_opportunity['name']}\n"
+            f"Mevcut Giriş Fiyatı: {best_opportunity['price']}\n"
+            f"Sinyal Durumu: {best_opportunity['signal']}\n"
+            f"Zarar Durdur (SL): {best_opportunity['sl']}\n"
+            f"Kar Al (TP %{best_opportunity['target_pct']} Hedef): {best_opportunity['tp']}\n"
+            f"💰 Alınması Gereken Miktar (1k$): {best_opportunity['qty']}\n\n"
+            f"{best_opportunity['guide']}\n"
+            f"----------------------------------------"
+        )
+    else:
+        final_note = "🔥 En yüksek kazanç potansiyeli hesaplanırken veri hatası oluştu."
 
-    final_note = (
-        f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ 🔥\n"
-        f"Teknik analiz kurallarına göre "
-        f"en yuksek getiri potansiyeli sunan arac: "
-        f"**{best_opportunity}**\n"
-        f"----------------------------------------"
-    )
     await context.bot.send_message(chat_id=chat_id, text=final_note)
 
 
