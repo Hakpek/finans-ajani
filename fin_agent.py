@@ -97,36 +97,22 @@ def get_guide_note(signal, entry_low, entry_high, sl, tp):
         )
 
 
-async def analyze_market_async_worker(ticker, timeframe="1d"):
+# Asenkron kilitlenmeleri önlemek için tamamen standart senkron (def) yapılan motor
+def analyze_market_sync(ticker, timeframe="1d"):
     try:
-        await asyncio.sleep(0.02)
-
-        if ticker == "EURUSD":
-            current_price, atr = random.uniform(1.0710, 1.0940), 0.0065
-        elif ticker == "GBPUSD":
-            current_price, atr = random.uniform(1.2620, 1.2840), 0.0080
-        elif ticker == "USDCHF":
-            current_price, atr = random.uniform(0.8810, 0.9090), 0.0055
-        elif ticker == "USDJPY":
-            current_price, atr = random.uniform(155.20, 158.40), 1.20
-        elif ticker == "USDTRY":
-            current_price, atr = random.uniform(32.25, 33.15), 0.15
-        elif ticker == "GOLD":
-            current_price, atr = random.uniform(2310.0, 2360.0), 22.0
-        elif ticker == "BTC":
-            current_price, atr = random.uniform(66200.0, 68500.0), 1400.0
-        elif ticker == "ETH":
-            current_price, atr = random.uniform(3420.0, 3590.0), 95.0
-        elif ticker == "THYAO":
-            current_price, atr = random.uniform(312.0, 324.0), 8.5
-        elif ticker == "XU100":
-            current_price, atr = random.uniform(10050.0, 10280.0), 150.0
-        elif ticker == "AAPL":
-            current_price, atr = random.uniform(186.0, 194.0), 4.2
-        elif ticker == "NVDA":
-            current_price, atr = random.uniform(910.0, 945.0), 28.0
-        else:
-            current_price, atr = 1.0, 0.01
+        if ticker == "EURUSD": current_price, atr = random.uniform(1.0710, 1.0940), 0.0065
+        elif ticker == "GBPUSD": current_price, atr = random.uniform(1.2620, 1.2840), 0.0080
+        elif ticker == "USDCHF": current_price, atr = random.uniform(0.8810, 0.9090), 0.0055
+        elif ticker == "USDJPY": current_price, atr = random.uniform(155.20, 158.40), 1.20
+        elif ticker == "USDTRY": current_price, atr = random.uniform(32.25, 33.15), 0.15
+        elif ticker == "GOLD": current_price, atr = random.uniform(2310.0, 2360.0), 22.0
+        elif ticker == "BTC": current_price, atr = random.uniform(66200.0, 68500.0), 1400.0
+        elif ticker == "ETH": current_price, atr = random.uniform(3420.0, 3590.0), 95.0
+        elif ticker == "THYAO": current_price, atr = random.uniform(312.0, 324.0), 8.5
+        elif ticker == "XU100": current_price, atr = random.uniform(10050.0, 10280.0), 150.0
+        elif ticker == "AAPL": current_price, atr = random.uniform(186.0, 194.0), 4.2
+        elif ticker == "NVDA": current_price, atr = random.uniform(910.0, 945.0), 28.0
+        else: current_price, atr = 1.0, 0.01
 
         rsi = random.uniform(31.0, 69.0)
 
@@ -152,9 +138,7 @@ async def analyze_market_async_worker(ticker, timeframe="1d"):
 
         pips_at_risk = abs(current_price - sl)
         lot_onerisi = "0.01 Lot"
-        if pips_at_risk > 0 and ticker not in [
-            "BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"
-        ]:
+        if pips_at_risk > 0 and ticker not in ["BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"]:
             lot_calc = risk_tutari / (pips_at_risk * 10000)
             lot_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
 
@@ -212,14 +196,9 @@ async def build_and_send_report(
     best_opportunity = None
     max_score = -1
 
-    # Tüm paritelerin isimleri düzeltilmiş doğru döngü kapısı
-    tasks = [
-        analyze_market_async_worker(ticker, timeframe)
-        for ticker in POPULAR_MARKETS.keys()
-    ]
-    results = await asyncio.gather(*tasks)
-
-    for res in results:
+    # Kilitlenmeyi önleyen kararlı senkron döngü akışı
+    for ticker in POPULAR_MARKETS.keys():
+        res = analyze_market_sync(ticker, timeframe)
         if res:
             f_rep += res["text"] + "\n\n"
             if "STRONG" in res["signal"] and res["score"] > max_score:
@@ -240,14 +219,9 @@ async def build_and_send_report(
 
 
 async def run_15min_strong_scanner(context: ContextTypes.DEFAULT_TYPE):
-    tasks = [
-        analyze_market_async_worker(ticker, "1d")
-        for ticker in POPULAR_MARKETS.keys()
-    ]
-    results = await asyncio.gather(*tasks)
     alert_report = ""
-
-    for res in results:
+    for ticker in POPULAR_MARKETS.keys():
+        res = analyze_market_sync(ticker, "1d")
         if res and "STRONG" in res["signal"]:
             alert_report += "🚨 GÜÇLÜ SİNYAL 🚨\n" + res["text"] + "\n\n"
 
@@ -261,7 +235,7 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "📊 Günlük Analiz":
         await update.message.reply_text(
-            "🔄 Tüm küresel piyasalar engelsiz paralel hattan çekiliyor..."
+            "🔄 Tüm küresel piyasalar engelsiz hattan çekiliyor..."
         )
         await build_and_send_report(context, "1d", chat_id)
     elif text == "📈 Haftalık Analiz":
