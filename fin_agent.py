@@ -22,7 +22,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# !!! BURAYA BOTFATHER'DAN ALDIĞINIZ EN YENİ VE GÜNCEL TOKENI YAPIŞTIRIN !!!
+# EN YENİ VE GÜVENLİ TOKEN BİLGİNİZ
 TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 
@@ -70,7 +70,6 @@ def analyze_market_sync(ticker, timeframe='1d'):
         entry_low = current_price * 0.9995
         entry_high = current_price * 1.0005
         
-        # 1000$ Bakiye Kuralları (%1.5 Risk = Maksimum 15$ Zarar)
         demo_bakiye = 1000.0
         risk_tutari = demo_bakiye * 0.015
         
@@ -92,7 +91,6 @@ def analyze_market_sync(ticker, timeframe='1d'):
             elif ticker == "GC=F":
                 lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))} Lot"
 
-        # Karakter hatalarını engellemek için Markdown sembolleri tamamen kaldırıldı
         report = (
             f"Sembol: {ticker.replace('=X', '')} ({POPULAR_MARKETS[ticker]})\n"
             f"Mevcut Fiyat: {current_price:.4f}\n"
@@ -124,15 +122,17 @@ async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
         report = analyze_market_sync(ticker, timeframe='1d')
         full_report += report + "\n\n"
         await asyncio.sleep(1)
-    # Parse mode kaldırıldı, karakter çökmeleri tamamen önlendi
     await context.bot.send_message(chat_id=chat_id, text=full_report)
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="Veriler cekiliyor, lütfen bekleyin...")
-    context.job_queue.run_once(send_daily_analysis, when=0, context=update.effective_chat.id)
+    # Kilitlenmeyi önlemek için doğrudan asenkron fonksiyonu çağırıyoruz, job_queue bağımlılığı kaldırıldı
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="🔄 Analiz hazırlanıyor, lütfen bekleyin...")
+    await send_daily_analysis(context)
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
+    
+    # Kilitlenmeleri tamamen önleyen kararlı yapı
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
