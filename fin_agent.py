@@ -1,14 +1,16 @@
 import logging
+import yfinance as yf
+import pandas as pd
+import ta
 import os
 import asyncio
-import random  # Dış kaynak engelini aşan içsel veri simülatörü
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 import threading
 
-# 1. LOGLAMA VE FLASK YAPILANDIRMASI
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.WARNING)
 
 flask_app = Flask(__name__)
@@ -21,62 +23,60 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 2. AYARLAR VE FOREX PARİTELERİ
+# GÜVENLİ YENİ TOKEN VE CHAT ID BİLGİLERİNİZ
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
-MARKET_PAIRS = {
-    "EURUSD": "EUR/USD Forex",
-    "GBPUSD": "GBP/USD Forex",
-    "USDCHF": "USD/CHF Forex",
-    "USDJPY": "USD/JPY Forex",
-    "USDTRY": "USD/TRY Forex",
-    "BTCUSD": "Bitcoin (Crypto)"
+POPULAR_MARKETS = {
+    "EURUSD=X": "EUR/USD Forex",
+    "GBPUSD=X": "GBP/USD Forex",
+    "USDJPY=X": "USD/JPY Forex",
+    "GC=F": "Altin ONS (Gold)",
+    "BTC-USD": "Bitcoin",
+    "ETH-USD": "Ethereum",
+    "THYAO.IS": "Turk Hava Yollari",
+    "XU100.IS": "BIST 100 Endeksi"
 }
 
-# 3. DIŞ BAĞLANTI İHTİYACI OLMAYAN %100 KARARLI ANALİZ MOTORU
-def generate_market_analysis(symbol, name):
+def analyze_market_sync(ticker, timeframe='1d'):
     try:
-        # Gerçek Forex piyasası dinamiklerine göre içsel fiyat ve oynaklık simülasyonu
-        if symbol == "EURUSD":
-            current_price = random.uniform(1.0700, 1.0950)
-            atr = 0.0065
-        elif symbol == "GBPUSD":
-            current_price = random.uniform(1.2600, 1.2850)
-            atr = 0.0080
-        elif symbol == "USDCHF":
-            current_price = random.uniform(0.8800, 0.9100)
-            atr = 0.0055
-        elif symbol == "USDJPY":
-            current_price = random.uniform(155.00, 158.50)
-            atr = 1.20
-        elif symbol == "USDTRY":
-            current_price = random.uniform(32.20, 33.10)
-            atr = 0.15
-        else:  # BTCUSD
-            current_price = random.uniform(67000.0, 69500.0)
-            atr = 1500.0
-
-        # Dinamik RSI analizi üretimi (30 ile 70 arasında yapay zeka osilatörü)
-        rsi_val = random.uniform(28.0, 72.0)
+        asset = yf.Ticker(ticker)
+        df = asset.history(period='3mo', interval='1d')
+        if df.empty or len(df) < 15:
+            return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Veri alinamadi.\n"
+            
+        df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
+        df['MACD'] = ta.trend.macd(df['Close'])
+        df['MACD_Signal'] = ta.trend.macd_signal(df['Close'])
         
-        # Algoritmik Sinyal Kararı
-        if rsi_val < 35: signal = "[STRONGBUY]"
-        elif rsi_val < 45: signal = "[BUY]"
-        elif rsi_val > 65: signal = "[STRONGSELL]"
-        elif rsi_val > 55: signal = "[SELL]"
+        # Forex için volatilite tamponu (Sabit %5 durdurma yerine 1000$ bakiye koruması)
+        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
+        
+        current_price = df['Close'].iloc[-1]
+        rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
+        macd = df['MACD'].iloc[-1] if not pd.isna(df['MACD'].iloc[-1]) else 0.0
+        macd_sig = df['MACD_Signal'].iloc[-1] if not pd.isna(df['MACD_Signal'].iloc[-1]) else 0.0
+        atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.002)
+        
+        score = 0
+        if rsi < 30: score += 1
+        elif rsi > 70: score -= 1
+        if macd > macd_sig: score += 1
+        else: score -= 1
+        
+        if score >= 2: signal = "[STRONGBUY]"
+        elif score == 1: signal = "[BUY]"
+        elif score == -1: signal = "[SELL]"
+        elif score <= -2: signal = "[STRONGSELL]"
         else: signal = "[NEUTRAL]"
         
-        # Spread tolerans bölgesi hesabı
-        spread_buffer = atr * 0.05
-        entry_low = current_price - spread_buffer
-        entry_high = current_price + spread_buffer
+        entry_low = current_price * 0.997
+        entry_high = current_price * 1.003
         
-        # 1000$ Bakiye Yönetimi Kuralları (Maksimum %1.5 risk = 15$)
+        # 1000$ Bakiye Uyumlu Mikro Hesaplama Kuralları
         demo_bakiye = 1000.0
-        risk_tutari = demo_bakiye * 0.015
+        risk_tutari = demo_bakiye * 0.015  # %1.5 bakiye riski ($15)
         
-        # ATR Tabanlı Profesyonel SL/TP Çarpanları
         if "BUY" in signal:
             sl = current_price - (atr * 1.5)
             tp = current_price + (atr * 3.0)
@@ -84,80 +84,79 @@ def generate_market_analysis(symbol, name):
             sl = current_price + (atr * 1.5)
             tp = current_price - (atr * 3.0)
         else:
-            sl = current_price - (atr * 2.0)
-            tp = current_price + (atr * 2.0)
+            sl = current_price * 0.97
+            tp = current_price * 1.03
             
-        # Pozisyon büyüklüğü (Lot) hesaplama
         pips_at_risk = abs(current_price - sl)
-        ideal_lot = 0.01
+        lot_onerisi = "0.01 Lot"
         if pips_at_risk > 0:
-            if symbol in ["EURUSD", "GBPUSD", "USDCHF"]:
-                ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 10000), 2))
-            elif symbol == "USDJPY":
-                ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))
-            elif symbol == "USDTRY":
-                ideal_lot = max(0.01, round(risk_tutari / (pips_at_risk * 10), 2))
-            else: # BTC
-                ideal_lot = max(0.01, round(risk_tutari / pips_at_risk, 3))
+            if ticker.endswith("=X"):
+                lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100000), 2))} Lot"
+            elif ticker == "GC=F":
+                lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))} Lot"
 
-        # Formatlama ayarı
-        fmt = ".5f" if symbol in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
-
-        return {
-            "ticker": symbol,
-            "name": name,
-            "price": f"{current_price:{fmt}}",
-            "entry": f"{entry_low:{fmt}} - {entry_high:{fmt}}",
-            "signal": signal,
-            "sl": f"{sl:{fmt}}",
-            "tp": f"{tp:{fmt}}",
-            "rsi": f"{rsi_val:.2f}",
-            "lot": f"{ideal_lot} Lot"
-        }
+        tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
+        report = (
+            f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
+            f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
+            f"Mevcut Fiyat: {current_price:.4f}\n"
+            f"🎯 Onerilen Giris Bolgesi: {entry_low:.4f} - {entry_high:.4f}\n"
+            f"📢 SINYAL: {signal}\n"
+            f"🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n"
+            f"📊 RSI: {rsi:.2f}\n"
+        )
+        if ticker.endswith("=X") or ticker == "GC=F":
+            report += f"💰 Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
+            
+        report += f"----------------------------------------"
+        return report
     except:
-        return None
+        return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Analiz sirasinda hata olustu.\n"
 
-def build_report_string(data):
-    if not data:
-        return ""
-    return (
-        f"Sembol: {data['ticker']} ({data['name']})\n"
-        f"Mevcut Fiyat: {data['price']}\n"
-        f"Giris Bolgesi: {data['entry']}\n"
-        f"SINYAL: {data['signal']}\n"
-        f"SL: {data['sl']} | TP: {data['tp']}\n"
-        f"RSI: {data['rsi']}\n"
-        f"Onerilen Pozisyon (1k$ / %1.5 Risk): {data['lot']}\n"
-        f"----------------------------------------\n"
-    )
-
-# 4. TELEGRAM TETİKLEYİCİLERİ
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
+    keyboard = [['/analiz_gunluk', '/otomatik_ac']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Finans Analiz Ajani Aktif!\n\nBağımsız dahili motor başarıyla devreye alındı.",
+        "👋 Finans Analiz Ajanina Hos Geldiniz!\n\n"
+        "Sistem calisan ilk kararli versiyonuna basariyla geri donduruldu.",
         reply_markup=reply_markup
     )
 
-async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == '📊 Günlük Analiz':
-        # Kullanıcıyı bekletmeden anında veriyi basıyoruz
-        full_report = "GANLIK PIYASA ANALIZ RAPORU\n\n"
-        
-        for symbol, name in MARKET_PAIRS.items():
-            data = generate_market_analysis(symbol, name)
-            if data:
-                full_report += build_report_string(data)
+async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
+    chat_id = context.job.context if context.job else MY_CHAT_ID
+    full_report = "📊 GUNLUK PIYASA ANALIZ RAPORU 📊\n\n"
+    for ticker in POPULAR_MARKETS.keys():
+        report = analyze_market_sync(ticker, timeframe='1d')
+        full_report += report + "\n\n"
+        await asyncio.sleep(1)
+    await context.bot.send_message(chat_id=chat_id, text=full_report)
 
-        await context.bot.send_message(chat_id=MY_CHAT_ID, text=full_report)
+async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.job_queue.run_once(send_daily_analysis, when=0, context=update.effective_chat.id)
+
+async def set_auto_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
+    for job in current_jobs:
+        job.schedule_removal()
+        
+    # Otomatik rapor saati talebiniz dogrultusunda sabah 06:45 olarak ayarlandi
+    context.job_queue.run_daily(
+        send_daily_analysis, 
+        time=datetime.strptime("06:45", "%H:%M").time(), 
+        context=chat_id, 
+        name=str(chat_id)
+    )
+    await update.message.reply_text("🔔 Otomatik sinyaller acildi! Her gun saat 06:45'te rapor iletilecek.")
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Text(['📊 Günlük Analiz']), manual_analysis_trigger))
-    application.add_handler(MessageHandler(filters.Text(['🕒 Sinyalleri Yeniden Başlat']), start))
+    application.add_handler(CommandHandler("analiz_gunluk", manual_analysis_trigger))
+    application.add_handler(CommandHandler("otomatik_ac", set_auto_signals))
+
     application.run_polling()
 
 if __name__ == '__main__':
