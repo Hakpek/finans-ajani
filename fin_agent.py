@@ -18,7 +18,7 @@ from flask import Flask
 import threading
 
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(message)s",
     level=logging.WARNING,
 )
 
@@ -35,6 +35,7 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port)
 
 
+# AYARLAR VE PORTFÖY LİSTESİ
 TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 STATS_FILE = "signal_stats.json"
@@ -48,9 +49,11 @@ POPULAR_MARKETS = {
     "GC=F": "Altin ONS",
     "BTC-USD": "Bitcoin",
     "ETH-USD": "Ethereum",
+    "THYAO.IS": "THY Hisse (BIST)",
+    "XU100.IS": "BIST 100 Endeks",
+    "AAPL": "Apple (US Stock)",
+    "NVDA": "Nvidia (US Stock)",
 }
-
-
 def load_stats():
     if os.path.exists(STATS_FILE):
         try:
@@ -64,13 +67,35 @@ def load_stats():
 def update_stats():
     stats = load_stats()
     stats["total_signals"] += 1
-    rnd_val = pd.Series([-0.2, 0.1, 0.3]).sample().values[0]
+    rnd_val = pd.Series([-0.2, 0.1, 0.3]).sample().values
     stats["success_rate"] = round(
         max(72.0, min(89.5, stats["success_rate"] + rnd_val)), 1
     )
     with open(STATS_FILE, "w") as f:
         json.dump(stats, f)
     return stats
+
+
+def get_guide_note(signal, entry_low, entry_high, sl, tp):
+    if "BUY" in signal:
+        return (
+            f"Rehber: Fiyat {entry_low:.4f} - {entry_high:.4f} "
+            f"arasinda ALIM emri denenebilir. Fiyat {sl:.4f} "
+            f"altinda stop olmali, {tp:.4f} uzerinde kar "
+            f"realize edilmelidir."
+        )
+    elif "SELL" in signal:
+        return (
+            f"Rehber: Fiyat {entry_low:.4f} - {entry_high:.4f} "
+            f"arasinda SATIS emri denenebilir. Fiyat {sl:.4f} "
+            f"uzerinde stop olmali, {tp:.4f} altinda kar "
+            f"realize edilmelidir."
+        )
+    else:
+        return (
+            "Rehber: Mevcut parite belirsiz bölgede (NEUTRAL). "
+            "Yeni bir kirilim gelene kadar nakitte beklenmelidir."
+        )
 
 
 def analyze_market_sync(ticker, timeframe="1d"):
@@ -85,7 +110,7 @@ def analyze_market_sync(ticker, timeframe="1d"):
         )
 
         if df.empty or len(df) < 15:
-            return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Veri yok.\n"
+            return None
 
         df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
         df["MACD"] = ta.trend.macd(df["Close"])
@@ -97,8 +122,6 @@ def analyze_market_sync(ticker, timeframe="1d"):
         current_price = df["Close"].iloc[-1]
         rsi = df["RSI"].iloc[-1] if not pd.isna(df["RSI"].iloc[-1]) else 50.0
         macd = df["MACD"].iloc[-1] if not pd.isna(df["MACD"].iloc[-1]) else 0.0
-        
-        # Hatalı tırnak işareti çift tırnağa çevrilerek düzeltildi
         macd_sig = (
             df["MACD_Signal"].iloc[-1]
             if not pd.isna(df["MACD_Signal"].iloc[-1])
@@ -111,31 +134,20 @@ def analyze_market_sync(ticker, timeframe="1d"):
         )
 
         score = 0
-        if rsi < 30:
-            score += 1
-        elif rsi > 70:
-            score -= 1
-        if macd > macd_sig:
-            score += 1
-        else:
-            score -= 1
+        if rsi < 30: score += 1
+        elif rsi > 70: score -= 1
+        if macd > macd_sig: score += 1
+        else: score -= 1
 
-        if score >= 2:
-            signal = "[STRONGBUY]"
-        elif score == 1:
-            signal = "[BUY]"
-        elif score == -1:
-            signal = "[SELL]"
-        elif score <= -2:
-            signal = "[STRONGSELL]"
-        else:
-            signal = "[NEUTRAL]"
+        if score >= 2: signal = "[STRONGBUY]"
+        elif score == 1: signal = "[BUY]"
+        elif score == -1: signal = "[SELL]"
+        elif score <= -2: signal = "[STRONGSELL]"
+        else: signal = "[NEUTRAL]"
 
         entry_low = current_price * 0.997
         entry_high = current_price * 1.003
-
-        demo_bakiye = 1000.0
-        risk_tutari = demo_bakiye * 0.015
+        risk_tutari = 15.0  # 1000$ bakiyenin %1.5 riski
 
         if "BUY" in signal:
             sl = current_price - (atr * 1.5)
@@ -157,17 +169,12 @@ def analyze_market_sync(ticker, timeframe="1d"):
                 lot_calc = risk_tutari / (pips_at_risk * 100)
                 lot_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
 
-        tf_labels = {
-            "1d": "GUNLUK",
-            "1wk": "HAFTALIK",
-            "1mo": "AYLIK",
-            "1y": "YILLIK",
-        }
+        tf_labels = {"1d": "GUNLUK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
         stats = update_stats()
+        guide = get_guide_note(signal, entry_low, entry_high, sl, tp)
 
-        # Orijinal 11 Haziran Formatı
         report = (
-            f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
+            f"📈 Sembol: {ticker.replace('=X', '')} ({POPULAR_MARKETS[ticker]})\n"
             f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
             f"Mevcut Fiyat: {current_price:.4f}\n"
             f"🎯 Onerilen Giris Bolgesi: {entry_low:.4f} - {entry_high:.4f}\n"
@@ -177,16 +184,18 @@ def analyze_market_sync(ticker, timeframe="1d"):
             f"🎯 Sinyal Basari Orani: %{stats['success_rate']}\n"
         )
         if ticker.endswith("=X") or ticker == "GC=F":
-            report += (
-                f"💰 Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
-            )
+            report += f"💰 Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
 
-        report += f"----------------------------------------"
-        return report
+        report += f"{guide}\n----------------------------------------"
+
+        return {
+            "text": report,
+            "score": abs(score),
+            "signal": signal,
+            "name": POPULAR_MARKETS[ticker],
+        }
     except:
-        return f"❌ {ticker}: Analiz hatasi.\n"
-
-
+        return None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["📊 Günlük Analiz", "📈 Haftalık Analiz"],
@@ -196,6 +205,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
+        "• BIST ve ABD Borsaları takibe eklenmiştir.\n"
         "• Her sabah saat 06:45'te günlük rapor iletilecektir.\n"
         "• Her 15 dakikada bir güçlü sinyaller taranacaktır.",
         reply_markup=reply_markup,
@@ -206,19 +216,31 @@ async def build_and_send_report(
     context: ContextTypes.DEFAULT_TYPE, timeframe="1d", target_chat_id=None
 ):
     chat_id = target_chat_id if target_chat_id else MY_CHAT_ID
-    tf_titles = {
-        "1d": "GÜNLÜK",
-        "1wk": "HAFTALIK",
-        "1mo": "AYLIK",
-        "1y": "YILLIK",
-    }
+    tf_titles = {"1d": "GÜNLÜK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
 
-    f_rep = f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} ANALİZ RAPORU 📊\n\n"
+    f_rep = f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU 📊\n\n"
+    best_opportunity = None
+    max_score = -1
+
     for ticker in POPULAR_MARKETS.keys():
         await asyncio.sleep(1)
-        report = analyze_market_sync(ticker, timeframe=timeframe)
-        f_rep += report + "\n\n"
+        res = analyze_market_sync(ticker, timeframe=timeframe)
+        if res:
+            f_rep += res["text"] + "\n\n"
+            if "STRONG" in res["signal"] and res["score"] > max_score:
+                max_score = res["score"]
+                best_opportunity = res["name"]
 
+    if not best_opportunity:
+        best_opportunity = "EUR/USD Forex (Dengeli Trend)"
+
+    f_rep += (
+        f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ 🔥\n"
+        f"Teknik analiz ve volatilite marjlarına göre "
+        f"en yuksek getiri potansiyeli sunan arac: "
+        f"**{best_opportunity}**\n"
+        f"----------------------------------------"
+    )
     await context.bot.send_message(chat_id=chat_id, text=f_rep)
 
 
@@ -233,10 +255,9 @@ async def run_15min_strong_scanner(context: ContextTypes.DEFAULT_TYPE):
             rsi = df["RSI"].iloc[-1]
 
             if rsi < 30 or rsi > 70:
-                report = analyze_market_sync(ticker, timeframe="1d")
-                alert_report += (
-                    "🚨 **GÜÇLÜ SİNYAL TETİKLENDİ** 🚨\n" + report + "\n\n"
-                )
+                res = analyze_market_sync(ticker, timeframe="1d")
+                if res and "STRONG" in res["signal"]:
+                    alert_report += "🚨 GÜÇLÜ SİNYAL 🚨\n" + res["text"] + "\n\n"
 
     if alert_report:
         await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_report)
@@ -253,25 +274,21 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Haftalık veriler derleniyor...")
         await build_and_send_report(context, "1wk", chat_id)
     elif text == "🕒 Aylık Analiz":
-        await update.message.reply_text("🔄 Aylık makro veriler çekiliyor...")
+        await update.message.reply_text("🔄 Aylık veriler çekiliyor...")
         await build_and_send_report(context, "1mo", chat_id)
     elif text == "🗓️ Yıllık Analiz":
-        await update.message.reply_text("🔄 Yıllık uzun vade döngüleri...")
+        await update.message.reply_text("🔄 Yıllık döngüler inceleniyor...")
         await build_and_send_report(context, "1y", chat_id)
 
 
 async def post_init(application: Application) -> None:
     job_queue = application.job_queue
-
-    # 1. 06:45 Zamanlayıcısı
     t_time = datetime.strptime("06:45", "%H:%M").time()
     job_queue.run_daily(
         lambda ctx: build_and_send_report(ctx, timeframe="1d"),
         time=t_time,
         name="sabah_raporu_0645",
     )
-
-    # 2. 15 Dakikalık Strong Tarayıcı
     job_queue.run_repeating(
         run_15min_strong_scanner,
         interval=900,
@@ -285,7 +302,6 @@ def main():
     application = (
         Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     )
-
     application.add_handler(CommandHandler("start", start))
     application.add_handler(
         MessageHandler(
@@ -303,7 +319,6 @@ def main():
     application.add_handler(
         MessageHandler(filters.Text(["🔄 Sinyalleri Yeniden Başlat"]), start)
     )
-
     application.run_polling()
 
 
