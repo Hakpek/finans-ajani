@@ -4,8 +4,8 @@ import ta
 import os
 import asyncio
 import json
-import random  # Tarayıcı simülasyonu için eklendi
-import aiohttp # requests yerine engel yemeyen asenkron ağ katmanı
+import random
+import aiohttp
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -40,7 +40,6 @@ TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 STATS_FILE = "signal_stats.json"
 
-# Engellenmeyen küresel açık API formatındaki tam liste
 POPULAR_MARKETS = {
     "EURUSD": "EUR/USD Forex",
     "GBPUSD": "GBP/USD Forex",
@@ -55,6 +54,8 @@ POPULAR_MARKETS = {
     "AAPL": "Apple (US Stock)",
     "NVDA": "Nvidia (US Stock)",
 }
+
+
 def load_stats():
     if os.path.exists(STATS_FILE):
         try:
@@ -99,54 +100,69 @@ def get_guide_note(signal, entry_low, entry_high, sl, tp):
         )
 
 
-# Yahoo Finance kullanmayan, asla engellenemez asenkron veri motoru
 async def analyze_market_async_worker(ticker, timeframe="1d"):
-    # Tarayıcı başlıkları simülasyonu (Bulut IP engellerini tamamen deler)
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/120.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
     }
-    
+
     async with aiohttp.ClientSession(headers=headers) as session:
         try:
-            # Tüm küresel borsaların canlı ve açık json hattan çekimi
             url = f"https://er-api.com"
             async with session.get(url, timeout=8) as response:
                 if response.status != 200:
                     return None
                 res = await response.json()
-            
+
             if not res or res.get("result") != "success":
                 return None
-                
+
             rates = res.get("rates", {})
-            
-            # Her piyasanın canlı fiyat eşlemesi ve teknik simülasyon katmanı
-            if ticker == "EURUSD": current_price = 1.0000 / float(rates.get("EUR", 0.92))
-            elif ticker == "GBPUSD": current_price = 1.0000 / float(rates.get("GBP", 0.78))
-            elif ticker == "USDCHF": current_price = float(rates.get("CHF", 0.89))
-            elif ticker == "USDJPY": current_price = float(rates.get("JPY", 156.0))
-            elif ticker == "USDTRY": current_price = float(rates.get("TRY", 32.5))
-            elif ticker == "GOLD": current_price = random.uniform(2300.0, 2350.0)
-            elif ticker == "BTC": current_price = random.uniform(66500.0, 68000.0)
-            elif ticker == "ETH": current_price = random.uniform(3450.0, 3600.0)
-            elif ticker == "THYAO": current_price = random.uniform(310.0, 325.0)
-            elif ticker == "XU100": current_price = random.uniform(10000.0, 10300.0)
-            elif ticker == "AAPL": current_price = random.uniform(185.0, 195.0)
-            elif ticker == "NVDA": current_price = random.uniform(900.0, 950.0)
-            else: current_price = 1.0
-            
-            # %100 Kararlı indikatör tampon üretimi (Asla boş veri hatası vermez)
+
+            if ticker == "EURUSD":
+                current_price = 1.0000 / float(rates.get("EUR", 0.92))
+            elif ticker == "GBPUSD":
+                current_price = 1.0000 / float(rates.get("GBP", 0.78))
+            elif ticker == "USDCHF":
+                current_price = float(rates.get("CHF", 0.89))
+            elif ticker == "USDJPY":
+                current_price = float(rates.get("JPY", 156.0))
+            elif ticker == "USDTRY":
+                current_price = float(rates.get("TRY", 32.5))
+            elif ticker == "GOLD":
+                current_price = random.uniform(2300.0, 2350.0)
+            elif ticker == "BTC":
+                current_price = random.uniform(66500.0, 68000.0)
+            elif ticker == "ETH":
+                current_price = random.uniform(3450.0, 3600.0)
+            elif ticker == "THYAO":
+                current_price = random.uniform(310.0, 325.0)
+            elif ticker == "XU100":
+                current_price = random.uniform(10000.0, 10300.0)
+            elif ticker == "AAPL":
+                current_price = random.uniform(185.0, 195.0)
+            elif ticker == "NVDA":
+                current_price = random.uniform(900.0, 950.0)
+            else:
+                current_price = 1.0
+
             rsi = random.uniform(32.0, 68.0)
-            atr = current_price * (0.05 if ticker in ["BTC", "ETH", "NVDA"] else 0.0035)
-            
-            if rsi < 36: signal = "[STRONGBUY]"
-            elif rsi < 46: signal = "[BUY]"
-            elif rsi > 64: signal = "[STRONGSELL]"
-            elif rsi > 54: signal = "[SELL]"
-            else: signal = "[NEUTRAL]"
-            
+            atr = current_price * (
+                0.05 if ticker in ["BTC", "ETH", "NVDA"] else 0.0035
+            )
+
+            if rsi < 36:
+                signal = "[STRONGBUY]"
+            elif rsi < 46:
+                signal = "[BUY]"
+            elif rsi > 64:
+                signal = "[STRONGSELL]"
+            elif rsi > 54:
+                signal = "[SELL]"
+            else:
+                signal = "[NEUTRAL]"
+
             entry_low = current_price * 0.998
             entry_high = current_price * 1.002
             risk_tutari = 15.0
@@ -163,28 +179,50 @@ async def analyze_market_async_worker(ticker, timeframe="1d"):
 
             pips_at_risk = abs(current_price - sl)
             lot_onerisi = "0.01 Lot"
-            if pips_at_risk > 0 and ticker not in ["BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"]:
+            if pips_at_risk > 0 and ticker not in [
+                "BTC",
+                "ETH",
+                "THYAO",
+                "XU100",
+                "AAPL",
+                "NVDA",
+            ]:
                 lot_calc = risk_tutari / (pips_at_risk * 10000)
                 lot_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
 
-            tf_labels = {"1d": "GUNLUK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
+            tf_labels = {
+                "1d": "GUNLUK",
+                "1wk": "HAFTALIK",
+                "1mo": "AYLIK",
+                "1y": "YILLIK",
+            }
             stats = update_stats()
             guide = get_guide_note(signal, entry_low, entry_high, sl, tp)
-            fmt = ".5f" if ticker in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
+            fmt = (
+                ".5f" if ticker in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
+            )
 
-            # 11 HAZİRAN ORİJİNAL FORMAT BAĞLANTISI
             report = (
-                f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
+                f" Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
                 f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
                 f"Mevcut Fiyat: {current_price:{fmt}}\n"
-                f"🎯 Onerilen Giris Bolgesi: {entry_low:{fmt}} - {entry_high:{fmt}}\n"
-                f"📢 SINYAL: {signal}\n"
-                f"🛑 SL: {sl:{fmt}} | 🎯 TP: {tp:{fmt}}\n"
-                f"📊 RSI: {rsi:.2f}\n"
-                f"🎯 Sinyal Basari Orani: %{stats['success_rate']}\n"
+                f" Onerilen Giris Bolgesi: {entry_low:{fmt}} - {entry_high:{fmt}}\n"
+                f" SINYAL: {signal}\n"
+                f" SL: {sl:{fmt}} |  TP: {tp:{fmt}}\n"
+                f" RSI: {rsi:.2f}\n"
+                f" Sinyal Basari Orani: %{stats['success_rate']}\n"
             )
-            if ticker not in ["BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"]:
-                report += f"💰 Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
+            if ticker not in [
+                "BTC",
+                "ETH",
+                "THYAO",
+                "XU100",
+                "AAPL",
+                "NVDA",
+            ]:
+                report += (
+                    f" Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
+                )
 
             report += f"{guide}\n----------------------------------------"
 
@@ -194,7 +232,7 @@ async def analyze_market_async_worker(ticker, timeframe="1d"):
                 "signal": signal,
                 "name": POPULAR_MARKETS[ticker],
             }
-        except Exception as e:
+        except:
             return None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -216,13 +254,17 @@ async def build_and_send_report(
     context: ContextTypes.DEFAULT_TYPE, timeframe="1d", target_chat_id=None
 ):
     chat_id = target_chat_id if target_chat_id else MY_CHAT_ID
-    tf_titles = {"1d": "GÜNLÜK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
+    tf_titles = {
+        "1d": "GÜNLÜK",
+        "1wk": "HAFTALIK",
+        "1mo": "AYLIK",
+        "1y": "YILLIK",
+    }
 
     f_rep = f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU 📊\n\n"
     best_opportunity = None
     max_score = -1
 
-    # Tüm pariteleri eş zamanlı ve engelsiz ağ geçidinden paralel toplama
     tasks = [
         analyze_market_async_worker(ticker, timeframe)
         for ticker in POPULAR_MARKETS.keys()
@@ -270,7 +312,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     if text == "📊 Günlük Analiz":
-        await update.message.reply_text("🔄 Tüm piyasalar engelsiz küresel hattan çekiliyor...")
+        await update.message.reply_text(
+            "🔄 Tüm piyasalar engelsiz küresel hattan çekiliyor..."
+        )
         await build_and_send_report(context, "1d", chat_id)
     elif text == "📈 Haftalık Analiz":
         await update.message.reply_text("🔄 Haftalık trend verileri derleniyor...")
@@ -279,7 +323,9 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔄 Aylık makro döngüler inceleniyor...")
         await build_and_send_report(context, "1mo", chat_id)
     elif text == "🗓️ Yıllık Analiz":
-        await update.message.reply_text("🔄 Yıllık uzun vade verileri çekiliyor...")
+        await update.message.reply_text(
+            "🔄 Yıllık uzun vade verileri çekiliyor..."
+        )
         await build_and_send_report(context, "1y", chat_id)
 
 
