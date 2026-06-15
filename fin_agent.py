@@ -35,7 +35,6 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port)
 
 
-# YENİ VE GÜVENLİ TOKEN BİLGİNİZ
 TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 STATS_FILE = "signal_stats.json"
@@ -65,7 +64,7 @@ def load_stats():
 def update_stats():
     stats = load_stats()
     stats["total_signals"] += 1
-    rnd_val = pd.Series([-0.2, 0.1, 0.3]).sample().values
+    rnd_val = pd.Series([-0.2, 0.1, 0.3]).sample().values[0]
     stats["success_rate"] = round(
         max(72.0, min(89.5, stats["success_rate"] + rnd_val)), 1
     )
@@ -97,7 +96,9 @@ def analyze_market_sync(ticker, timeframe="1d"):
 
         current_price = df["Close"].iloc[-1]
         rsi = df["RSI"].iloc[-1] if not pd.isna(df["RSI"].iloc[-1]) else 50.0
-        macd = df["MACD"].iloc[-1] if not pd.isna(df["MACD'].iloc[-1]) else 0.0
+        macd = df["MACD"].iloc[-1] if not pd.isna(df["MACD"].iloc[-1]) else 0.0
+        
+        # Hatalı tırnak işareti çift tırnağa çevrilerek düzeltildi
         macd_sig = (
             df["MACD_Signal"].iloc[-1]
             if not pd.isna(df["MACD_Signal"].iloc[-1])
