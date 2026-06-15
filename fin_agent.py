@@ -22,17 +22,17 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# GÜVENLİ VE DOĞRULANMIŞ TOKEN BİLGİLERİNİZ
-TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
+# !!! BURAYA BOTFATHER'DAN ALDIĞINIZ EN YENİ VE GÜNCEL TOKENI YAPIŞTIRIN !!!
+TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 
 POPULAR_MARKETS = {
-    "EURUSD=X": "EUR/USD Forex",
-    "GBPUSD=X": "GBP/USD Forex",
-    "USDCHF=X": "USD/CHF Forex",
-    "USDJPY=X": "USD/JPY Forex",
-    "USDTRY=X": "USD/TRY Forex",
-    "GC=F": "Altin ONS (Gold)",
+    "EURUSD=X": "EUR-USD Forex",
+    "GBPUSD=X": "GBP-USD Forex",
+    "USDCHF=X": "USD-CHF Forex",
+    "USDJPY=X": "USD-JPY Forex",
+    "USDTRY=X": "USD-TRY Forex",
+    "GC=F": "Altin ONS",
     "BTC-USD": "Bitcoin",
     "ETH-USD": "Ethereum"
 }
@@ -42,7 +42,7 @@ def analyze_market_sync(ticker, timeframe='1d'):
         asset = yf.Ticker(ticker)
         df = asset.history(period='3mo', interval='1d')
         if df.empty or len(df) < 15:
-            return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Veri alinamadi.\n"
+            return f"❌ {ticker}: Veri alinamadi.\n"
             
         df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         df['MACD'] = ta.trend.macd(df['Close'])
@@ -92,6 +92,7 @@ def analyze_market_sync(ticker, timeframe='1d'):
             elif ticker == "GC=F":
                 lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))} Lot"
 
+        # Karakter hatalarını engellemek için Markdown sembolleri tamamen kaldırıldı
         report = (
             f"Sembol: {ticker.replace('=X', '')} ({POPULAR_MARKETS[ticker]})\n"
             f"Mevcut Fiyat: {current_price:.4f}\n"
@@ -106,30 +107,28 @@ def analyze_market_sync(ticker, timeframe='1d'):
         report += f"----------------------------------------"
         return report
     except:
-        return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Analiz sirasinda hata olustu.\n"
+        return f"❌ {ticker}: Analiz sirasinda hata olustu.\n"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Ekranınızdaki buton isimleriyle tam eşleşen yeni alt klavye düzeni
     keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "Aşağıdaki butonları kullanarak piyasa analizlerini anlık alabilirsiniz.",
+        "Finans Analiz Ajani Aktif!\n\nAşağıdaki butonları kullanarak piyasa analizlerini anlık alabilirsiniz.",
         reply_markup=reply_markup
     )
 
 async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.context if context.job else MY_CHAT_ID
-    full_report = "📊 ANLIK PİYASA ANALİZ RAPORU 📊\n\n"
+    full_report = "PIYASA ANALIZ RAPORU\n\n"
     for ticker in POPULAR_MARKETS.keys():
         report = analyze_market_sync(ticker, timeframe='1d')
         full_report += report + "\n\n"
         await asyncio.sleep(1)
+    # Parse mode kaldırıldı, karakter çökmeleri tamamen önlendi
     await context.bot.send_message(chat_id=chat_id, text=full_report)
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Kullanıcı "Günlük Analiz" butonuna bastığında tetiklenir
-    await context.bot.send_message(chat_id=update.effective_chat.id, text="🔄 Veriler çekiliyor, lütfen bekleyin...")
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Veriler cekiliyor, lütfen bekleyin...")
     context.job_queue.run_once(send_daily_analysis, when=0, context=update.effective_chat.id)
 
 def main():
@@ -137,8 +136,6 @@ def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    
-    # Buton metinlerini algılayan yeni mesaj yönlendiricileri
     application.add_handler(MessageHandler(filters.Text(['📊 Günlük Analiz']), manual_analysis_trigger))
     application.add_handler(MessageHandler(filters.Text(['🕒 Sinyalleri Yeniden Başlat']), start))
 
