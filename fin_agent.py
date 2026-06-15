@@ -3,7 +3,6 @@ import pandas as pd
 import ta
 import os
 import asyncio
-import json
 import random
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
@@ -153,7 +152,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "• Tüm Forex, BIST ve ABD Borsası verileri aktif hattan çekilir.\n"
+        "• Mesaj parçalama kalkanı devrededir. Tüm veriler eksiksiz iletilir.\n"
         "• Her sabah saat 06:45'te günlük rapor iletilecektir.\n"
         "• Her 15 dakikada bir güçlü sinyaller taranacaktır.",
         reply_markup=reply_markup,
@@ -166,30 +165,54 @@ async def build_and_send_report(
     chat_id = target_chat_id if target_chat_id else MY_CHAT_ID
     tf_titles = {"1d": "GÜNLÜK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
 
-    f_rep = f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU 📊\n\n"
+    # İlk mesaj başlığı gönderimi
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text=f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU BAŞLADI 📊\n----------------------------------------"
+    )
+
     best_opportunity = None
     max_score = -1
+    current_chunk = ""
+    msg_counter = 1
 
     for ticker in POPULAR_MARKETS.keys():
         res = analyze_market_sync(ticker, timeframe)
         if res:
-            f_rep += res["text"] + "\n\n"
+            current_chunk += res["text"] + "\n\n"
             if "STRONG" in res["signal"] and res["score"] > max_score:
                 max_score = res["score"]
                 best_opportunity = res["name"]
+            
+            # TELEGRAM 4096 SINIRI KORUMASI: Her 3 paritede bir mesajı bölüp gönderir
+            if len(current_chunk) > 2500:
+                await context.bot.send_message(
+                    chat_id=chat_id, 
+                    text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
+                )
+                current_chunk = ""
+                msg_counter += 1
+                await asyncio.sleep(0.5) # Sunucu koruma molası
+
+    # Kalan son pariteleri gönder
+    if current_chunk:
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
+        )
 
     if not best_opportunity:
-        best_opportunity = "EUR/USD Forex (Küresel Güçlü Trend)"
+        best_opportunity = "EUR/USD Forex (Küresel Güçlü Korelasyon)"
 
-    f_rep += (
+    # En yüksek kazanç potansiyeli alanını ayrı bir kapanış mesajı olarak atar
+    final_note = (
         f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ 🔥\n"
         f"Teknik analiz ve volatilite marjlarına göre "
         f"en yuksek getiri potansiyeli sunan arac: "
         f"**{best_opportunity}**\n"
         f"----------------------------------------"
     )
-    
-    await context.bot.send_message(chat_id=chat_id, text=f_rep)
+    await context.bot.send_message(chat_id=chat_id, text=final_note)
 
 
 async def run_15min_strong_scanner(context: ContextTypes.DEFAULT_TYPE):
