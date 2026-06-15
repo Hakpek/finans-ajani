@@ -3,6 +3,7 @@ import pandas as pd
 import ta
 import os
 import asyncio
+import json
 import random
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
@@ -51,25 +52,25 @@ POPULAR_MARKETS = {
     "AAPL": "Apple (US Stock)",
     "NVDA": "Nvidia (US Stock)",
 }
-def get_guide_note(signal, entry_price, sl, tp):
+def get_guide_note(signal, entry, sl, tp, label, target_p):
     if "BUY" in signal:
         return (
-            f"Rehber: Fiyat {entry_price:.4f} seviyesine ulastiginda "
-            f"ALIM emri denenebilir. Fiyat {sl:.4f} altinda stop "
-            f"olmali, %5 kar getiren {tp:.4f} hedefinde kar "
+            f"Rehber: Fiyat {entry:.4f} seviyesinde ALIM emri "
+            f"denenebilir. Fiyat {sl:.4f} altinda stop olmali, "
+            f"%{target_p} kar getiren {tp:.4f} hedefinde kar "
             f"realize edilmelidir."
         )
     elif "SELL" in signal:
         return (
-            f"Rehber: Fiyat {entry_price:.4f} seviyesine ulastiginda "
+            f"Rehber: Fiyat {entry:.4f} seviyesine ulastiginda "
             f"SATIS emri denenebilir. Fiyat {sl:.4f} uzerinde stop "
-            f"olmali, %5 kar getiren {tp:.4f} hedefinde kar "
+            f"olmali, %{target_p} kar getiren {tp:.4f} hedefinde kar "
             f"realize edilmelidir."
         )
     else:
         return (
-            "Rehber: Mevcut parite belirsiz bölgede (NEUTRAL). "
-            "Yeni bir kirilim gelene kadar nakitte beklenmelidir."
+            f"Rehber: Mevcut parite belirsiz bölgede (NEUTRAL). "
+            f"Yeni bir trend kirilimi gelene kadar beklenmelidir."
         )
 
 
@@ -96,30 +97,45 @@ def analyze_market_sync(ticker, timeframe="1d"):
     elif rsi > 54: signal = "[SELL]"
     else: signal = "[NEUTRAL]"
 
-    entry_price = current_price  # Bölge aralığı tek rakama indirgendi
-    risk_tutari = 15.0
+    entry_price = current_price
+    risk_tutari = 15.0  # 1000$'ın %1.5'i
 
-    # TP HEDEFLERİ %5 NET KAR ORANINA GÖRE SABİTLENDİ
+    # Periyot Bazlı Kâr Hedef Katsayılarının Eşlenmesi
+    p_targets = {"1d": 5, "1wk": 15, "1mo": 20, "1y": 100}
+    target_pct = p_map = p_targets.get(timeframe, 5)
+    katsayi = target_pct / 100.0
+
     if "BUY" in signal:
         sl = current_price - (atr * 1.5)
-        tp = current_price * 1.05  # Tam %5 yukarı hedef
+        tp = current_price * (1.0 + katsayi)
     elif "SELL" in signal:
         sl = current_price + (atr * 1.5)
-        tp = current_price * 0.95  # Tam %5 aşağı hedef
+        tp = current_price * (1.0 - katsayi)
     else:
         sl = current_price * 0.99
-        tp = current_price * 1.01
+        tp = current_price * (1.0 + katsayi)
 
     pips_at_risk = abs(current_price - sl)
-    lot_onerisi = "0.01 Lot"
-    if pips_at_risk > 0 and ticker not in ["BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"]:
-        lot_calc = risk_tutari / (pips_at_risk * 10000)
-        lot_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
+    hisse_adet_onerisi = "N/A"
+    
+    if pips_at_risk > 0:
+        if ticker.endswith("=X") or ticker in ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "USDTRY"]:
+            # Forex için standart Lot hesaplama
+            lot_calc = risk_tutari / (pips_at_risk * 10000)
+            hisse_adet_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
+        elif ticker == "GOLD":
+            lot_calc = risk_tutari / (pips_at_risk * 100)
+            hisse_adet_onerisi = f"{max(0.01, round(lot_calc, 2))} Lot"
+        else:
+            # Hisse senedi ve Kriptolar için 1000$ bakiye uyumlu net Adet hesaplama
+            if ticker in ["BTC", "ETH"]:
+                hisse_adet_onerisi = f"{round(risk_tutari / pips_at_risk, 4)} Adet"
+            else:
+                hisse_adet_onerisi = f"{max(1, round(risk_tutari / pips_at_risk, 1))} Adet"
 
     tf_labels = {"1d": "GUNLUK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
-    
     success_rate = round(random.uniform(76.5, 84.8), 1)
-    guide = get_guide_note(signal, entry_price, sl, tp)
+    guide = get_guide_note(signal, entry_price, sl, tp, target_pct, target_pct)
     fmt = ".5f" if ticker in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
 
     report = (
@@ -128,13 +144,11 @@ def analyze_market_sync(ticker, timeframe="1d"):
         f"Mevcut Fiyat: {current_price:{fmt}}\n"
         f" Onerilen Giris Fiyati: {entry_price:{fmt}}\n"
         f" SINYAL: {signal}\n"
-        f" SL: {sl:{fmt}} |  TP (%5 Hedef): {tp:{fmt}}\n"
-        f" RSI: {rsi:.2f}\n"
+        f" SL: {sl:{fmt}} |  TP (%{target_pct} Hedef): {tp:{fmt}}\n"
+        f" RSI: {ticker_rsi if 'ticker_rsi' in locals() else rsi:.2f}\n"
         f" Sinyal Basari Orani: %{success_rate}\n"
+        f" 💰 Alınması Gereken Miktar (1k$): {hisse_adet_onerisi}\n"
     )
-    if ticker not in ["BTC", "ETH", "THYAO", "XU100", "AAPL", "NVDA"]:
-        report += f" Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
-
     report += f"{guide}\n----------------------------------------"
 
     return {
@@ -152,9 +166,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "• Giriş fiyatı tek rakama indirgendi ve hedef karlar %5'e sabitlendi.\n"
-        "• Her sabah saat 06:45'te günlük rapor iletilecektir.\n"
-        "• Her 15 dakikada bir güçlü sinyaller taranacaktır.",
+        "• Günlük: %5 | Haftalık: %15 | Aylık: %20 | Yıllık: %100 Kâr hedefleri.\n"
+        "• 1000$ bakiye için tam alınması gereken Adet/Lot bilgileri eklenmiştir.\n"
+        "• Her sabah saat 06:45'te günlük rapor otomatik iletilecektir.",
         reply_markup=reply_markup,
     )
 
@@ -203,7 +217,7 @@ async def build_and_send_report(
 
     final_note = (
         f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ 🔥\n"
-        f"Teknik analiz ve %5 kar hedeflerine göre "
+        f"Teknik analiz kurallarına göre "
         f"en yuksek getiri potansiyeli sunan arac: "
         f"**{best_opportunity}**\n"
         f"----------------------------------------"
@@ -227,16 +241,16 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     if text == "📊 Günlük Analiz":
-        await update.message.reply_text("🔄 Tüm küresel piyasalar engelsiz hattan çekiliyor...")
+        await update.message.reply_text("🔄 Günlük hedefler hesaplanıyor (Kâr Hedefi: %5)...")
         await build_and_send_report(context, "1d", target_chat_id=chat_id)
     elif text == "📈 Haftalık Analiz":
-        await update.message.reply_text("🔄 Haftalık trend verileri derleniyor...")
+        await update.message.reply_text("🔄 Haftalık hedefler hesaplanıyor (Kâr Hedefi: %15)...")
         await build_and_send_report(context, "1wk", target_chat_id=chat_id)
     elif text == "🕒 Aylık Analiz":
-        await update.message.reply_text("🔄 Aylık makro döngüler inceleniyor...")
+        await update.message.reply_text("🔄 Aylık hedefler hesaplanıyor (Kâr Hedefi: %20)...")
         await build_and_send_report(context, "1mo", target_chat_id=chat_id)
     elif text == "🗓️ Yıllık Analiz":
-        await update.message.reply_text("🔄 Yıllık uzun vade verileri çekiliyor...")
+        await update.message.reply_text("🔄 Yıllık hedefler hesaplanıyor (Kâr Hedefi: %100)...")
         await build_and_send_report(context, "1y", target_chat_id=chat_id)
 
 
