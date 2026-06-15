@@ -7,7 +7,6 @@ import asyncio
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from flask import Flask
 import threading
 
@@ -23,24 +22,19 @@ def run_flask():
     port = int(os.environ.get("PORT", 10000))
     flask_app.run(host='0.0.0.0', port=port)
 
-# 11 HAZİRAN SONRASI GÜVENLİĞE ALDIĞIMIZ YENİ TOKEN BİLGİLERİNİZ
+# GÜVENLİ VE DOĞRULANMIŞ TOKEN BİLGİLERİNİZ
 TELEGRAM_TOKEN = "8714335607:AAEXVAqXmIdKWF1BD9R3aLWoFzkv4A3y_pc"
 MY_CHAT_ID = 965495144
 
 POPULAR_MARKETS = {
-    "THYAO.IS": "Turk Hava Yollari",
-    "EREGL.IS": "Eregli Demir Celik",
-    "ASELS.IS": "Aselsan",
-    "XU100.IS": "BIST 100 Endeksi",
-    "AAPL": "Apple Stock",
-    "NVDA": "Nvidia Stock",
-    "^GSPC": "S&P 500 Endeksi",
-    "GC=F": "Altin ONS (Gold)",
     "EURUSD=X": "EUR/USD Forex",
+    "GBPUSD=X": "GBP/USD Forex",
+    "USDCHF=X": "USD/CHF Forex",
+    "USDJPY=X": "USD/JPY Forex",
     "USDTRY=X": "USD/TRY Forex",
+    "GC=F": "Altin ONS (Gold)",
     "BTC-USD": "Bitcoin",
-    "ETH-USD": "Ethereum",
-    "SOL-USD": "Solana"
+    "ETH-USD": "Ethereum"
 }
 
 def analyze_market_sync(ticker, timeframe='1d'):
@@ -53,74 +47,80 @@ def analyze_market_sync(ticker, timeframe='1d'):
         df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_Signal'] = ta.trend.macd_signal(df['Close'])
+        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'], window=14)
         
         current_price = df['Close'].iloc[-1]
         rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
         macd = df['MACD'].iloc[-1] if not pd.isna(df['MACD'].iloc[-1]) else 0.0
         macd_sig = df['MACD_Signal'].iloc[-1] if not pd.isna(df['MACD_Signal'].iloc[-1]) else 0.0
+        atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (current_price * 0.002)
         
         score = 0
-        if rsi < 30:
-            score += 1
-        elif rsi > 70:
-            score -= 1
-            
-        if macd > macd_sig:
-            score += 1
-        else:
-            score -= 1
-            
-        if score >= 2:
-            signal = "[STRONGBUY]"
-        elif score == 1:
-            signal = "[BUY]"
-        elif score == -1:
-            signal = "[SELL]"
-        elif score <= -2:
-            signal = "[STRONGSELL]"
-        else:
-            signal = "[NEUTRAL]"
-            
-        entry_low = current_price * 0.997
-        entry_high = current_price * 1.003
+        if rsi < 30: score += 1
+        elif rsi > 70: score -= 1
+        if macd > macd_sig: score += 1
+        else: score -= 1
+        
+        if score >= 2: signal = "[STRONGBUY]"
+        elif score == 1: signal = "[BUY]"
+        elif score == -1: signal = "[SELL]"
+        elif score <= -2: signal = "[STRONGSELL]"
+        else: signal = "[NEUTRAL]"
+        
+        entry_low = current_price * 0.9995
+        entry_high = current_price * 1.0005
+        
+        # 1000$ Bakiye Kuralları (%1.5 Risk = Maksimum 15$ Zarar)
+        demo_bakiye = 1000.0
+        risk_tutari = demo_bakiye * 0.015
         
         if "BUY" in signal:
-            sl = current_price * 0.95
-            tp = current_price * 1.10
+            sl = current_price - (atr * 1.5)
+            tp = current_price + (atr * 3.0)
         elif "SELL" in signal:
-            sl = current_price * 1.05
-            tp = current_price * 0.90
+            sl = current_price + (atr * 1.5)
+            tp = current_price - (atr * 3.0)
         else:
-            sl = current_price * 0.97
-            tp = current_price * 1.03
+            sl = current_price * 0.995
+            tp = current_price * 1.005
             
-        tf_labels = {'1d': 'GUNLUK', '1wk': 'HAFTALIK', '1mo': 'AYLIK'}
+        pips_at_risk = abs(current_price - sl)
+        lot_onerisi = "0.01 Lot"
+        if pips_at_risk > 0:
+            if ticker.endswith("=X"):
+                lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100000), 2))} Lot"
+            elif ticker == "GC=F":
+                lot_onerisi = f"{max(0.01, round(risk_tutari / (pips_at_risk * 100), 2))} Lot"
+
         report = (
-            f"📈 Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
-            f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
+            f"Sembol: {ticker.replace('=X', '')} ({POPULAR_MARKETS[ticker]})\n"
             f"Mevcut Fiyat: {current_price:.4f}\n"
-            f"🎯 Onerilen Giris Bolgesi: {entry_low:.4f} - {entry_high:.4f}\n"
-            f"📢 SINYAL: {signal}\n"
-            f"🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n"
-            f"📊 RSI: {rsi:.2f}\n"
-            f"----------------------------------------"
+            f"Giris Bolgesi: {entry_low:.4f} - {entry_high:.4f}\n"
+            f"SINYAL: {signal}\n"
+            f"SL: {sl:.4f} | TP: {tp:.4f}\n"
+            f"RSI: {rsi:.2f}\n"
         )
+        if ticker.endswith("=X") or ticker == "GC=F":
+            report += f"Onerilen Pozisyon (1k$ / %1.5 Risk): {lot_onerisi}\n"
+            
+        report += f"----------------------------------------"
         return report
     except:
         return f"❌ {ticker} ({POPULAR_MARKETS[ticker]}): Analiz sirasinda hata olustu.\n"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [['/analiz_gunluk', '/otomatik_ac']]
+    # Ekranınızdaki buton isimleriyle tam eşleşen yeni alt klavye düzeni
+    keyboard = [['📊 Günlük Analiz', '🕒 Sinyalleri Yeniden Başlat']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "👋 Finans Analiz Ajanina Hos Geldiniz!\n\n"
-        "Sistem 11 Haziran tarihindeki orijinal ve kararli versiyonuna basariyla geri donduruldu.",
+        "👋 Finans Analiz Ajanı Aktif!\n\n"
+        "Aşağıdaki butonları kullanarak piyasa analizlerini anlık alabilirsiniz.",
         reply_markup=reply_markup
     )
 
 async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.context if context.job else MY_CHAT_ID
-    full_report = "📊 GUNLUK PIYASA ANALIZ RAPORU 📊\n\n"
+    full_report = "📊 ANLIK PİYASA ANALİZ RAPORU 📊\n\n"
     for ticker in POPULAR_MARKETS.keys():
         report = analyze_market_sync(ticker, timeframe='1d')
         full_report += report + "\n\n"
@@ -128,29 +128,19 @@ async def send_daily_analysis(context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=chat_id, text=full_report)
 
 async def manual_analysis_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Kullanıcı "Günlük Analiz" butonuna bastığında tetiklenir
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="🔄 Veriler çekiliyor, lütfen bekleyin...")
     context.job_queue.run_once(send_daily_analysis, when=0, context=update.effective_chat.id)
-
-async def set_auto_signals(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    current_jobs = context.job_queue.get_jobs_by_name(str(chat_id))
-    for job in current_jobs:
-        job.schedule_removal()
-        
-    context.job_queue.run_daily(
-        send_daily_analysis, 
-        time=datetime.strptime("09:00", "%H:%M").time(), 
-        context=chat_id, 
-        name=str(chat_id)
-    )
-    await update.message.reply_text("🔔 Otomatik sinyaller acildi! Her gun TSİ 09:00'da rapor iletilecek.")
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("analiz_gunluk", manual_analysis_trigger))
-    application.add_handler(CommandHandler("otomatik_ac", set_auto_signals))
+    
+    # Buton metinlerini algılayan yeni mesaj yönlendiricileri
+    application.add_handler(MessageHandler(filters.Text(['📊 Günlük Analiz']), manual_analysis_trigger))
+    application.add_handler(MessageHandler(filters.Text(['🕒 Sinyalleri Yeniden Başlat']), start))
 
     application.run_polling()
 
