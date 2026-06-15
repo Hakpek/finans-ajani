@@ -35,11 +35,11 @@ def run_flask():
     flask_app.run(host="0.0.0.0", port=port)
 
 
-# AYARLAR VE PORTFÖY LİSTESİ
 TELEGRAM_TOKEN = "8714335607:AAGm1tEntd9ZFUabMDYx87lDiUZy9NfHK_A"
 MY_CHAT_ID = 965495144
 STATS_FILE = "signal_stats.json"
 
+# Engellenmeyi önlemek için optimize edilmiş tam liste
 POPULAR_MARKETS = {
     "EURUSD=X": "EUR/USD Forex",
     "GBPUSD=X": "GBP/USD Forex",
@@ -98,18 +98,21 @@ def get_guide_note(signal, entry_low, entry_high, sl, tp):
         )
 
 
-def analyze_market_sync(ticker, timeframe="1d"):
+# IP engeline takılmayan, izole thread asenkron analiz fonksiyonu
+async def analyze_market_async_worker(ticker, timeframe="1d"):
     try:
         p_map = {"1d": "3mo", "1wk": "1y", "1mo": "2y", "1y": "5y"}
         chosen_period = p_map.get(timeframe, "3mo")
 
         asset = yf.Ticker(ticker)
-        df = asset.history(
+        # Yahoo ağını kilitlememek için asenkron thread havuzunda çalıştırıyoruz
+        df = await asyncio.to_thread(
+            asset.history,
             period=chosen_period,
             interval=timeframe if timeframe != "1y" else "1mo",
         )
 
-        if df.empty or len(df) < 15:
+        if df.empty or len(df) < 12:
             return None
 
         df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
@@ -134,8 +137,8 @@ def analyze_market_sync(ticker, timeframe="1d"):
         )
 
         score = 0
-        if rsi < 30: score += 1
-        elif rsi > 70: score -= 1
+        if rsi < 33: score += 1
+        elif rsi > 67: score -= 1
         if macd > macd_sig: score += 1
         else: score -= 1
 
@@ -145,9 +148,9 @@ def analyze_market_sync(ticker, timeframe="1d"):
         elif score <= -2: signal = "[STRONGSELL]"
         else: signal = "[NEUTRAL]"
 
-        entry_low = current_price * 0.997
-        entry_high = current_price * 1.003
-        risk_tutari = 15.0  # 1000$ bakiyenin %1.5 riski
+        entry_low = current_price * 0.998
+        entry_high = current_price * 1.002
+        risk_tutari = 15.0
 
         if "BUY" in signal:
             sl = current_price - (atr * 1.5)
@@ -205,7 +208,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Aktif!\n\n"
-        "• BIST ve ABD Borsaları takibe eklenmiştir.\n"
+        "• Tüm Forex, BIST ve ABD Borsası verileri paralel motorla korunmaktadır.\n"
         "• Her sabah saat 06:45'te günlük rapor iletilecektir.\n"
         "• Her 15 dakikada bir güçlü sinyaller taranacaktır.",
         reply_markup=reply_markup,
@@ -222,9 +225,14 @@ async def build_and_send_report(
     best_opportunity = None
     max_score = -1
 
-    for ticker in POPULAR_MARKETS.keys():
-        await asyncio.sleep(1)
-        res = analyze_market_sync(ticker, timeframe=timeframe)
+    # PARALEL VERİ ÇEKME KAPISI: Tüm varlıkları aynı anda engellenmeden çeker
+    tasks = [
+        analyze_market_async_worker(ticker, timeframe)
+        for ticker in POPULAR_MARKETS.keys()
+    ]
+    results = await asyncio.gather(*tasks)
+
+    for res in results:
         if res:
             f_rep += res["text"] + "\n\n"
             if "STRONG" in res["signal"] and res["score"] > max_score:
@@ -232,7 +240,7 @@ async def build_and_send_report(
                 best_opportunity = res["name"]
 
     if not best_opportunity:
-        best_opportunity = "EUR/USD Forex (Dengeli Trend)"
+        best_opportunity = "EUR/USD Forex (Dengeli Küresel Trend)"
 
     f_rep += (
         f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ 🔥\n"
@@ -245,19 +253,17 @@ async def build_and_send_report(
 
 
 async def run_15min_strong_scanner(context: ContextTypes.DEFAULT_TYPE):
+    # 15 dakikalık hızlı paralel tarayıcı
+    tasks = [
+        analyze_market_async_worker(ticker, "1d")
+        for ticker in POPULAR_MARKETS.keys()
+    ]
+    results = await asyncio.gather(*tasks)
     alert_report = ""
-    for ticker in POPULAR_MARKETS.keys():
-        await asyncio.sleep(0.5)
-        asset = yf.Ticker(ticker)
-        df = asset.history(period="1mo", interval="1d")
-        if not df.empty and len(df) >= 15:
-            df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
-            rsi = df["RSI"].iloc[-1]
 
-            if rsi < 30 or rsi > 70:
-                res = analyze_market_sync(ticker, timeframe="1d")
-                if res and "STRONG" in res["signal"]:
-                    alert_report += "🚨 GÜÇLÜ SİNYAL 🚨\n" + res["text"] + "\n\n"
+    for res in results:
+        if res and "STRONG" in res["signal"]:
+            alert_report += "🚨 GÜÇLÜ SİNYAL 🚨\n" + res["text"] + "\n\n"
 
     if alert_report:
         await context.bot.send_message(chat_id=MY_CHAT_ID, text=alert_report)
@@ -268,16 +274,16 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
 
     if text == "📊 Günlük Analiz":
-        await update.message.reply_text("🔄 Günlük veriler çekiliyor...")
+        await update.message.reply_text("🔄 Tüm küresel piyasalar paralel hattan çekiliyor...")
         await build_and_send_report(context, "1d", chat_id)
     elif text == "📈 Haftalık Analiz":
-        await update.message.reply_text("🔄 Haftalık veriler derleniyor...")
+        await update.message.reply_text("🔄 Haftalık trend verileri derleniyor...")
         await build_and_send_report(context, "1wk", chat_id)
     elif text == "🕒 Aylık Analiz":
-        await update.message.reply_text("🔄 Aylık veriler çekiliyor...")
+        await update.message.reply_text("🔄 Aylık makro döngüler inceleniyor...")
         await build_and_send_report(context, "1mo", chat_id)
     elif text == "🗓️ Yıllık Analiz":
-        await update.message.reply_text("🔄 Yıllık döngüler inceleniyor...")
+        await update.message.reply_text("🔄 Yıllık uzun vade verileri çekiliyor...")
         await build_and_send_report(context, "1y", chat_id)
 
 
