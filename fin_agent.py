@@ -177,21 +177,19 @@ async def analyze_market_sync(ticker, timeframe="1d"):
         fmt = ".5f" if ticker in ["EURUSD", "GBPUSD", "USDCHF"] else ".2f"
         guide = get_guide_note(signal, entry_price, sl, tp, tf_labels[timeframe], fmt)
 
-        report = (
-            f" Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
-            f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
-            f"Mevcut Fiyat: {current_price:{fmt}}\n"
-            f" Onerilen Giris Fiyati: {entry_price:{fmt}}\n"
-            f" SINYAL: {signal}\n"
-            f" SL: {sl:{fmt}} |  TP: {tp:{fmt}}\n"
-            f" RSI: {rsi:.2f}\n"
-            f" Sinyal Basari Orani: %{success_rate}\n"
-            f" 💰 Alınması Gereken Miktar (1k$): {hisse_adet_onerisi}\n"
-        )
-        report += f"{guide}\n----------------------------------------"
-
         return {
-            "text": report,
+            "text": (
+                f" Sembol: {ticker} ({POPULAR_MARKETS[ticker]})\n"
+                f"Periyot: {tf_labels.get(timeframe, 'GUNLUK')}\n"
+                f"Mevcut Fiyat: {current_price:{fmt}}\n"
+                f" Onerilen Giris Fiyati: {entry_price:{fmt}}\n"
+                f" SINYAL: {signal}\n"
+                f" SL: {sl:{fmt}} |  TP: {tp:{fmt}}\n"
+                f" RSI: {rsi:.2f}\n"
+                f" Sinyal Basari Orani: %{success_rate}\n"
+                f" 💰 Alınması Gereken Miktar (1k$): {hisse_adet_onerisi}\n"
+                f"{guide}\n----------------------------------------"
+            ),
             "score": 3 if "STRONG" in signal else 1,
             "signal": signal,
             "name": POPULAR_MARKETS[ticker],
@@ -203,8 +201,6 @@ async def analyze_market_sync(ticker, timeframe="1d"):
             "label": tf_labels[timeframe],
             "fmt": fmt,
         }
-    except:
-        return None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["📊 Günlük Analiz", "📈 Haftalık Analiz"],
@@ -263,7 +259,7 @@ async def build_and_send_report(
     if best_opportunity:
         final_note = (
             f"🔥 EN YÜKSEK KAZANÇ POTANSİYELİ RAPORU 🔥\n\n"
-            f"MetaTrader canlı kur fiyatlarına ve makul spread marjlarına göre "
+            f"MetaTrader canlı kur fiyatlarına bir hatasız spread marjlarına göre "
             f"en yüksek getiri sunan varlık: {best_opportunity['name']}\n"
             f"Mevcut Giriş Fiyatı: {best_opportunity['price']}\n"
             f"Sinyal Durumu: {best_opportunity['signal']}\n"
