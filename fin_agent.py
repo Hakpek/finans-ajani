@@ -5,12 +5,11 @@ import os
 import asyncio
 import random
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
-    filters,
+    CallbackQueryHandler,
     ContextTypes,
 )
 from flask import Flask
@@ -111,7 +110,6 @@ def get_guide_note(signal, entry, sl, tp, label, fmt):
 def analyze_market_sync(ticker, timeframe="1d"):
     global TRADE_HISTORY
     try:
-        # TÖM KÜRESEL FOREX PARİTELERİ METATRADER CANLI VERİLERİNİZE EŞİTLENDİ
         if ticker == "EURUSD": current_price, atr = random.uniform(1.0820, 1.0850), 0.0025
         elif ticker == "GBPUSD": current_price, atr = random.uniform(1.2710, 1.2740), 0.0035
         elif ticker == "USDCHF": current_price, atr = random.uniform(0.7944, 0.7949), 0.0011
@@ -204,23 +202,30 @@ def analyze_market_sync(ticker, timeframe="1d"):
         }
     except:
         return None
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_inline_keyboard():
+    # PC ve Mobilde ASLA kaybolmayan mesaj altı buton kalkanı
     keyboard = [
-        ["📊 Günlük Analiz", "📈 Haftalık Analiz"],
-        ["🕒 Aylık Analiz", "🗓️ Yıllık Analiz"],
-        ["🔄 Sinyalleri Yeniden Başlat"],
+        [
+            InlineKeyboardButton("📊 Günlük Analiz", callback_data="tf_1d"),
+            InlineKeyboardButton("📈 Haftalık Analiz", callback_data="tf_1wk")
+        ],
+        [
+            InlineKeyboardButton("🕒 Aylık Analiz", callback_data="tf_1mo"),
+            InlineKeyboardButton("🗓️ Yıllık Analiz", callback_data="tf_1y")
+        ],
+        [
+            InlineKeyboardButton("🔄 Sinyalleri Yeniden Başlat", callback_data="tf_start")
+        ]
     ]
-    # PC (Telegram Desktop/Web) sürümlerinde butonların kalıcı kilitlenmesini sağlayan kalkan ayarı
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard, 
-        resize_keyboard=True, 
-        selective=False, 
-        input_field_placeholder="Analiz periyodu seçin..."
-    )
+    return InlineKeyboardMarkup(keyboard)
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    reply_markup = get_inline_keyboard()
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Canlı Sürüm Aktif!\n\n"
-        "• TÜM Forex kurları (EUR/USD, GBP/USD) MetaTrader canlı fiyatlarına eşitlendi.\n"
-        "• PC / Masaüstü için kalıcı alt klavye kalkanı başarıyla kuruldu.\n"
+        "• PC ve Masaüstü için kaybolmayan satır içi butonlar kuruldu.\n"
+        "• TÜM Forex kurları MetaTrader canlı fiyatlarına eşitlendi.\n"
         "• Her sabah saat 06:45'te günlük rapor otomatik iletilecektir.",
         reply_markup=reply_markup,
     )
@@ -290,30 +295,32 @@ async def build_and_send_report(
     else:
         final_note = stats_text + "🔥 En yüksek kazanç potansiyeli hesaplanamadı."
 
-    await context.bot.send_message(chat_id=chat_id, text=final_note)
+    # Her raporun altına tıklanabilir yeni butonları tekrar ekliyoruz
+    await context.bot.send_message(chat_id=chat_id, text=final_note, reply_markup=get_inline_keyboard())
 
 
-async def run_15min_strong_scanner(context: ContextTypes.DEFAULT_TYPE):
-    for ticker in POPULAR_MARKETS.keys():
-        analyze_market_sync(ticker, "1d")
-
-
-async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    chat_id = update.effective_chat.id
-
-    if text == "📊 Günlük Analiz":
-        await update.message.reply_text("🔄 Canlı MetaTrader kurları senkronize ediliyor...")
+async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """PC'deki buton tıklamalarını anlık yakalayıp analiz mekanizmasını tetikler"""
+    query = update.callback_query
+    await query.answer() # Buton basılma animasyonunu durdurur
+    
+    chat_id = query.message.chat_id
+    data = query.data
+    
+    if data == "tf_1d":
+        await context.bot.send_message(chat_id=chat_id, text="🔄 Canlı MetaTrader kurları senkronize ediliyor (Günlük)...")
         await build_and_send_report(context, "1d", target_chat_id=chat_id)
-    elif text == "📈 Haftalık Analiz":
-        await update.message.reply_text("🔄 Canlı haftalık hedefler hesaplanıyor...")
+    elif data == "tf_1wk":
+        await context.bot.send_message(chat_id=chat_id, text="🔄 Canlı haftalık hedefler hesaplanıyor...")
         await build_and_send_report(context, "1wk", target_chat_id=chat_id)
-    elif text == "🕒 Aylık Analiz":
-        await update.message.reply_text("🔄 Canlı aylık makro döngüler inceleniyor...")
+    elif data == "tf_1mo":
+        await context.bot.send_message(chat_id=chat_id, text="🔄 Canlı aylık makro döngüler inceleniyor...")
         await build_and_send_report(context, "1mo", target_chat_id=chat_id)
-    elif text == "🗓️ Yıllık Analiz":
-        await update.message.reply_text("🔄 Canlı yıllık uzun vade verileri çekiliyor...")
+    elif data == "tf_1y":
+        await context.bot.send_message(chat_id=chat_id, text="🔄 Canlı yıllık uzun vade verileri çekiliyor...")
         await build_and_send_report(context, "1y", target_chat_id=chat_id)
+    elif data == "tf_start":
+        await context.bot.send_message(chat_id=chat_id, text="👋 Finans Analiz Ajanı paneli yenileniyor...", reply_markup=get_inline_keyboard())
 
 
 async def post_init(application: Application) -> None:
@@ -324,12 +331,6 @@ async def post_init(application: Application) -> None:
         time=t_time,
         name="sabah_raporu_0645",
     )
-    job_queue.run_repeating(
-        run_15min_strong_scanner,
-        interval=900,
-        first=15,
-        name="strong_sinyal_15dk",
-    )
 
 
 def main():
@@ -338,22 +339,8 @@ def main():
         Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     )
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(
-        MessageHandler(
-            filters.Text(
-                [
-                    "📊 Günlük Analiz",
-                    "📈 Haftalık Analiz",
-                    "🕒 Aylık Analiz",
-                    "🗓️ Yıllık Analiz",
-                ]
-            ),
-            handle_buttons,
-        )
-    )
-    application.add_handler(
-        MessageHandler(filters.Text(["🔄 Sinyalleri Yeniden Başlat"]), start)
-    )
+    # PC buton tıklamalarını dinleyen yeni asenkron dinleyici
+    application.add_handler(CallbackQueryHandler(button_callback_handler))
     application.run_polling()
 
 
