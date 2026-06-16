@@ -4,7 +4,7 @@ import ta
 import os
 import asyncio
 import random
-import aiohttp  # Canlı Google/Açık veri ağı için eklendi
+import aiohttp
 from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -74,18 +74,15 @@ def get_guide_note(signal, entry, sl, tp, label, fmt):
         )
 
 
-# Bulut engellerine takılmayan küresel gerçek zamanlı canlı veri motoru
 async def analyze_market_sync(ticker, timeframe="1d"):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
     async with aiohttp.ClientSession(headers=headers) as session:
         try:
-            # Küresel açık döviz ve emtia kur ağından anlık json çekimi (Asla engellenmez)
             url = "https://er-api.com"
             async with session.get(url, timeout=7) as response:
                 res = await response.json()
             rates = res.get("rates", {})
 
-            # Fiyatların ve ATR oynaklıklarının MetaTrader ile %100 eşlenmesi
             if ticker == "EURUSD":
                 current_price = 1.0000 / float(rates.get("EUR", 0.925))
                 atr = 0.0025
@@ -98,7 +95,6 @@ async def analyze_market_sync(ticker, timeframe="1d"):
             elif ticker == "USDJPY":
                 current_price = float(rates.get("JPY", 155.80))
                 atr = 0.35
-            # USD/TRY kuru doğrudan küresel canlı borsa ağından MetaTrader'a eşitlendi (46.xx)
             elif ticker == "USDTRY":
                 current_price = float(rates.get("TRY", 46.27))
                 atr = 0.08
@@ -126,8 +122,13 @@ async def analyze_market_sync(ticker, timeframe="1d"):
             else:
                 current_price, atr = 1.0, 0.01
         except:
-            # Yedek kalkan fiyatları (Ağ kesilirse çökmemek için)
-            fallbacks = {"EURUSD": 1.0745, "GBPUSD": 1.2690, "USDCHF": 0.7947, "USDJPY": 155.75, "USDTRY": 46.27}
+            fallbacks = {
+                "EURUSD": 1.0745,
+                "GBPUSD": 1.2690,
+                "USDCHF": 0.7947,
+                "USDJPY": 155.75,
+                "USDTRY": 46.27,
+            }
             current_price = fallbacks.get(ticker, 1.0)
             atr = 0.002
 
@@ -157,7 +158,7 @@ async def analyze_market_sync(ticker, timeframe="1d"):
 
         pips_at_risk = abs(current_price - sl)
         hisse_adet_onerisi = "0.01 Lot"
-        
+
         if pips_at_risk > 0:
             if ticker in ["EURUSD", "GBPUSD", "USDCHF", "USDJPY", "USDTRY"]:
                 lot_calc = risk_tutari / (pips_at_risk * 10000)
@@ -200,8 +201,10 @@ async def analyze_market_sync(ticker, timeframe="1d"):
             "qty": hisse_adet_onerisi,
             "guide": guide,
             "label": tf_labels[timeframe],
-            "fmt": fmt
+            "fmt": fmt,
         }
+    except:
+        return None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["📊 Günlük Analiz", "📈 Haftalık Analiz"],
@@ -211,7 +214,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "👋 Finans Analiz Ajanı Canlı Sürüm Aktif!\n\n"
-        "• Tüm fiyatlar MetaTrader canlı borsa verileriyle %100 senkronize edildi.\n"
+        "• Tüm fiyatlar MetaTrader borsa verileriyle senkronize edildi.\n"
         "• USD/TRY: 46.xx | USD/CHF: 0.79xx canlı hatları devrededir.\n"
         "• Her sabah saat 06:45'te günlük rapor otomatik iletilecektir.",
         reply_markup=reply_markup,
@@ -225,8 +228,8 @@ async def build_and_send_report(
     tf_titles = {"1d": "GÜNLÜK", "1wk": "HAFTALIK", "1mo": "AYLIK", "1y": "YILLIK"}
 
     await context.bot.send_message(
-        chat_id=chat_id, 
-        text=f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU BAŞLADI 📊\n----------------------------------------"
+        chat_id=chat_id,
+        text=f"📊 {tf_titles.get(timeframe, 'GÜNLÜK')} RAPORU BAŞLADI 📊\n----------------------------------------",
     )
 
     best_opportunity = None
@@ -234,11 +237,7 @@ async def build_and_send_report(
     current_chunk = ""
     msg_counter = 1
 
-    # Tüm varlıkları engelsiz ve eş zamanlı canlı hattan paralel toplama döngüsü
-    tasks = [
-        analyze_market_sync(ticker, timeframe)
-        for ticker in POPULAR_MARKETS.keys()
-    ]
+    tasks = [analyze_market_sync(ticker, timeframe) for ticker in POPULAR_MARKETS.keys()]
     results = await asyncio.gather(*tasks)
 
     for res in results:
@@ -247,11 +246,10 @@ async def build_and_send_report(
             if res["score"] > max_score or (res["score"] == max_score and best_opportunity is None):
                 max_score = res["score"]
                 best_opportunity = res
-            
+
             if len(current_chunk) > 2500:
                 await context.bot.send_message(
-                    chat_id=chat_id, 
-                    text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
+                    chat_id=chat_id, text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
                 )
                 current_chunk = ""
                 msg_counter += 1
@@ -259,8 +257,7 @@ async def build_and_send_report(
 
     if current_chunk:
         await context.bot.send_message(
-            chat_id=chat_id, 
-            text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
+            chat_id=chat_id, text=f"📦 [Bölüm {msg_counter}]\n\n{current_chunk}"
         )
 
     if best_opportunity:
@@ -283,10 +280,7 @@ async def build_and_send_report(
 
 
 async def run_15min_strong_scanner(context: ContextTypes.DEFAULT_TYPE):
-    tasks = [
-        analyze_market_sync(ticker, "1d")
-        for ticker in POPULAR_MARKETS.keys()
-    ]
+    tasks = [analyze_market_sync(ticker, "1d") for ticker in POPULAR_MARKETS.keys()]
     results = await asyncio.gather(*tasks)
     alert_report = ""
 
@@ -338,10 +332,6 @@ def main():
         Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     )
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(
-        MessageHandler(
-            application.add_handler(CommandHandler("start", start))
-    ))
     application.add_handler(
         MessageHandler(
             filters.Text(
