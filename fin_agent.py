@@ -66,10 +66,12 @@ def get_db_win_rate(ticker):
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
 
-def analyze_market_sync(ticker, timeframe='1d'):
+def analyze_market_sync(ticker, tf='1d'):
     try:
-        df = yf.Ticker(ticker).history(period='3mo', interval='1d')
-        if df.empty or len(df) < 20: return f"❌ {ticker}: Veri alinamadi.\n"
+        p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK'), '1y': ('5y', '3mo', 'YILLIK')}
+        prd, ivl, tf_txt = p_map.get(tf, ('3mo', '1d', 'GUNLUK'))
+        df = yf.Ticker(ticker).history(period=prd, interval=ivl)
+        if df.empty or len(df) < 10: return f"❌ {ticker}: Veri alinamadi.\n"
         df['RSI'] = ta.momentum.rsi(df['Close'])
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_S'] = ta.trend.macd_signal(df['Close'])
@@ -102,10 +104,12 @@ def analyze_market_sync(ticker, timeframe='1d'):
                 mc = (cfg["contract_size"] * lot) / 100 if cfg["type"] == "fx" else (cfg["contract_size"] * lot * p) / 100
                 tk = ticker.replace("=X", "").replace("=F", "").replace("^", "")
                 stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else "BRENT" if tk == "BZ" else "NAS100" if tk == "NDX" else tk
-                return f"📈 Sembol: {ticker}\nPeriyot: GUNLUK | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD (1000$ Bakiye Modeli)\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin."
-            return f"📈 Sembol: {ticker}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n⏳ PİYASA NOTU: Yon belirsiz, islem acmayin."
+                return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD (1000$ Modeli)\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin."
+            return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n⏳ PİYASA NOTU: Yon belirsiz, islem acmayin."
         sl, tp = (p * 0.95, p * 1.10) if "BUY" in sig else (p * 1.05, p * 0.90) if "SELL" in sig else (p * 0.97, p * 1.03)
-        return f"📈 Sembol: {ticker}\nPeriyot: GUNLUK | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n📊 RSI: {rsi:.2f}"
+        # Hisse ve Kriptolar için 1000$ bakiye risk yönetimi (Maksimum %5 bakiye kullanımı = 50$) adet hesabı:
+        adet = max(int(50.0 / p), 1) if p < 50 else 1
+        return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.2f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n⚙️ Onerilen Adet (Lot): {adet} Adet (1000$ Modeli)\n📊 RSI: {rsi:.2f}"
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
 def get_highest_potential_report_sync(tf):
     try:
@@ -127,21 +131,20 @@ def get_highest_potential_report_sync(tf):
     except Exception as e: return f"❌ Rapor hazirlanirken hata olustu: {str(e)}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [['/piyasa', '/rapor']]
+    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\nKullanabileceginiz komutlar:\n/piyasa - Tum populer piyasalari analiz eder.\n/rapor - Yuksek potansiyelli sinyalleri raporlar.", reply_markup=reply_markup)
+    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen analiz etmek istediniz periyodu asagidaki menuden secin:", reply_markup=reply_markup)
 
-async def piyasa_analiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔄 Populer piyasalar analiz ediliyor, lutfen bekleyin...")
-    rapor = "📊 **GÜNCEL PİYASA ANALİZLERİ** 📊\n\n"
-    for ticker in list(POPULAR_MARKETS.keys())[:6]:  
-        rapor += analyze_market_sync(ticker) + "\n" + "-"*20 + "\n"
-    await update.message.reply_text(rapor)
-
-async def rapor_ver(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔍 Yuksek potansiyelli pariteler taraniyor...")
-    sonuc = get_highest_potential_report_sync('1d')
-    await update.message.reply_text(sonuc)
+async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = update.message.text
+    tf_map = {'📊 GUNLUK ANALIZ': '1d', '📈 HAFTALIK ANALIZ': '1wk', '📉 AYLIK ANALIZ': '1mo', '🗓 YILLIK ANALIZ': '1y'}
+    if txt in tf_map:
+        tf = tf_map[txt]
+        await update.message.reply_text(f"🔄 {txt} yapiliyor, veriler toplaniyor...")
+        rapor = f"📊 **GÜNCEL {txt} SONUÇLARI** 📊\n\n"
+        for ticker in list(POPULAR_MARKETS.keys())[:5]:  
+            rapor += analyze_market_sync(ticker, tf) + "\n" + "-"*15 + "\n"
+        await update.message.reply_text(rapor)
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
@@ -149,8 +152,7 @@ def main():
     api_request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = Application.builder().token(TELEGRAM_TOKEN).request(api_request).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("piyasa", piyasa_analiz))
-    app.add_handler(CommandHandler("rapor", rapor_ver))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_isleyici))
     print("🚀 Bot basariyla calistirildi! Telegram'dan test edebilirsiniz.")
     app.run_polling()
 
