@@ -65,8 +65,7 @@ def get_db_win_rate(ticker):
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
-        
-        def analyze_market_sync(ticker, tf='1d'):
+def analyze_market_sync(ticker, tf='1d'):
     try:
         p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK'), '1y': ('5y', '3mo', 'YILLIK')}
         prd, ivl, tf_txt = p_map.get(tf, ('3mo', '1d', 'GUNLUK'))
@@ -158,4 +157,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-        
