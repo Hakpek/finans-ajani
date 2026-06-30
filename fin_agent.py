@@ -18,20 +18,29 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHLDAvpLikqdpo1Ya
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
 
+# Ekran görüntünüzdeki tüm Forex ve Emtia pariteleri eklendi
 POPULAR_MARKETS = {
-    "EURUSD=X": "EUR/USD Forex", "USDTRY=X": "USD/TRY Forex", "GC=F": "Altin ONS (Gold)", 
-    "SI=F": "Gumus ONS (Silver)", "BZ=F": "Brent Petrol (Oil)", "^NDX": "Nasdaq 100 Endeksi",
-    "THYAO.IS": "Turk Hava Yollari", "EREGL.IS": "Eregli Demir Celik", "ASELS.IS": "Aselsan", 
-    "XU100.IS": "BIST 100 Endeksi", "AAPL": "Apple Stock", "NVDA": "Nvidia Stock"
+    "EURUSD=X": "EUR/USD Forex", "GBPUSD=X": "GBP/USD Forex", "USDCHF=X": "USD/CHF Forex",
+    "USDJPY=X": "USD/JPY Forex", "USDCNH=X": "USD/CNH Forex", "USDRUB=X": "USD/RUB Forex",
+    "AUDUSD=X": "AUD/USD Forex", "NZDUSD=X": "NZD/USD Forex", "USDCAD=X": "USD/CAD Forex",
+    "USDSEK=X": "USD/SEK Forex", "USDTRY=X": "USD/TRY Forex", "SI=F": "Gumus ONS (XAGUSD)",
+    "GC=F": "Altin ONS (XAUUSD)"
 }
 
 FOREX_CONFIG = {
     "EURUSD=X": {"pip_size": 0.0001, "spread_pips": 1.5, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "GBPUSD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "USDCHF=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "USDJPY=X": {"pip_size": 0.01, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "USDCNH=X": {"pip_size": 0.0001, "spread_pips": 3.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "USDRUB=X": {"pip_size": 0.01, "spread_pips": 10.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "AUDUSD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "NZDUSD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "USDCAD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
+    "USDSEK=X": {"pip_size": 0.0001, "spread_pips": 5.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
     "USDTRY=X": {"pip_size": 0.0001, "spread_pips": 20.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
     "GC=F": {"pip_size": 0.10, "spread_pips": 3.5, "is_forex": True, "contract_size": 100, "type": "commodity"},
-    "SI=F": {"pip_size": 0.01, "spread_pips": 2.5, "is_forex": True, "contract_size": 5000, "type": "commodity"},
-    "BZ=F": {"pip_size": 0.01, "spread_pips": 3.0, "is_forex": True, "contract_size": 1000, "type": "commodity"},
-    "^NDX": {"pip_size": 1.00, "spread_pips": 1.5, "is_forex": True, "contract_size": 10, "type": "index"}
+    "SI=F": {"pip_size": 0.01, "spread_pips": 2.5, "is_forex": True, "contract_size": 5000, "type": "commodity"}
 }
 
 def init_db():
@@ -70,7 +79,7 @@ def analyze_market_sync(ticker, tf='1d'):
         p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK'), '1y': ('5y', '3mo', 'YILLIK')}
         prd, ivl, tf_txt = p_map.get(tf, ('3mo', '1d', 'GUNLUK'))
         df = yf.Ticker(ticker).history(period=prd, interval=ivl)
-        if df.empty or len(df) < 10: return f"❌ {ticker}: Veri alinamadi.\n"
+        if df.empty or len(df) < 10: return None
         df['RSI'] = ta.momentum.rsi(df['Close'])
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_S'] = ta.trend.macd_signal(df['Close'])
@@ -84,50 +93,28 @@ def analyze_market_sync(ticker, tf='1d'):
         n_sc, n_txt = get_news_sentiment(ticker)
         sc += (1 if n_sc > 0 else -1 if n_sc < 0 else 0)
         sig = "[STRONGBUY]" if sc >= 2 else "[BUY]" if sc >= 1 else "[SELL]" if sc <= -1 else "[STRONGSELL]" if sc <= -2 else "[NEUTRAL]"
+        
+        # İstediğiniz gibi NEUTRAL sinyallerini tamamen eliyoruz, rapor kalabalığı yapmıyor
+        if sig == "[NEUTRAL]": return None
+        
         wr = get_db_win_rate(ticker)
         cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "spread_pips": 0, "is_forex": False})
-        if cfg["is_forex"]:
-            pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
-            sl_p = max(atr_p * 1.5, 12.0)
-            tp_p = sl_p * 1.5
-            if "BUY" in sig: sl, tp, mt, ok, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", True, "PIYASA ISLEMI (BUY)"
-            elif "SELL" in sig: sl, tp, mt, ok, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", True, "PIYASA ISLEMI (SELL)"
-            else: ok = False
-            if ok:
-                try:
-                    conn = psycopg2.connect(DB_URL, connect_timeout=2)
-                    conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
-                    conn.commit(); conn.close()
-                except: pass
-                lot = max(min(20.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip if cfg["type"] == "commodity" else cfg["contract_size"])), 2.0), 0.01)
-                mc = (cfg["contract_size"] * lot) / 100 if cfg["type"] == "fx" else (cfg["contract_size"] * lot * p) / 100
-                tk = ticker.replace("=X", "").replace("=F", "").replace("^", "")
-                stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else "BRENT" if tk == "BZ" else "NAS100" if tk == "NDX" else tk
-                return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD (1000$ Modeli)\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin."
-            return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n⏳ PİYASA NOTU: Yon belirsiz, islem acmayin."
-        sl, tp = (p * 0.95, p * 1.10) if "BUY" in sig else (p * 1.05, p * 0.90) if "SELL" in sig else (p * 0.97, p * 1.03)
-        adet = max(int(50.0 / p), 1) if p < 50 else 1
-        return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.2f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n⚙️ Onerilen Adet (Lot): {adet} Adet (1000$ Modeli)\n📊 RSI: {rsi:.2f}"
-    except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
-
-def get_highest_potential_report_sync(tf):
-    try:
-        if tf == '1d': tk, nm, mt, rsn = "BZ=F", "Brent Petrol", "BRENT", "Bollinger alt bandi testi ve Stochastic asiri satim onayi."
-        elif tf == '1wk': tk, nm, mt, rsn = "SI=F", "Ons Gumus", "XAGUSD", "Haber sentiment pozitifligi ve Altin/Gumus rasyosu dip donusu."
-        else: tk, nm, mt, rsn = "^NDX", "Nasdaq 100", "NAS100", "Teknoloji sirketleri ralli trendi ve MACD yukari kesisim onayi."
-        df = yf.Ticker(tk).history(period='3mo', interval='1d')
-        p = df['Close'].iloc[-1]
-        df['ATR'] = ta.volatility.average_true_range(df['High'], df['Low'], df['Close'])
-        atr = df['ATR'].iloc[-1] if not pd.isna(df['ATR'].iloc[-1]) else (p * 0.005)
-        cfg = FOREX_CONFIG.get(tk, {"pip_size": 0.01, "spread_pips": 0, "contract_size": 100, "type": "commodity"})
-        pip = cfg["pip_size"]
-        sl_p = max((atr / pip) * 1.5, 12.0)
+        pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
+        sl_p = max(atr_p * 1.5, 12.0)
         tp_p = sl_p * 1.5
-        sl = p - (sl_p * pip)
-        tp = p + (tp_p * pip)
+        if "BUY" in sig: sl, tp, mt, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", "PIYASA ISLEMI (BUY)"
+        else: sl, tp, mt, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", "PIYASA ISLEMI (SELL)"
+        try:
+            conn = psycopg2.connect(DB_URL, connect_timeout=2)
+            conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
+            conn.commit(); conn.close()
+        except: pass
         lot = max(min(20.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip if cfg["type"] == "commodity" else cfg["contract_size"])), 2.0), 0.01)
-        return f"🔥 EN YUKSEK POTANSIYELLI {tf.upper()} RAPORU\n📌 Sembol: {nm} ({tk})\n💵 Fiyat: {p:.4f}\n🎯 Hedef Yön: PIYASA ISLEMI (BUY)\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Onerilen Lot: {lot:.2f}\n💡 Gerekce: {rsn}"
-    except Exception as e: return f"❌ Rapor hazirlanirken hata olustu: {str(e)}"
+        mc = (cfg["contract_size"] * lot) / 100 if cfg["type"] == "fx" else (cfg["contract_size"] * lot * p) / 100
+        tk = ticker.replace("=X", "").replace("=F", "")
+        stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
+        return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin."
+    except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ']]
@@ -139,10 +126,15 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tf_map = {'📊 GUNLUK ANALIZ': '1d', '📈 HAFTALIK ANALIZ': '1wk', '📉 AYLIK ANALIZ': '1mo', '🗓 YILLIK ANALIZ': '1y'}
     if txt in tf_map:
         tf = tf_map[txt]
-        await update.message.reply_text(f"🔄 {txt} yapiliyor, veriler toplaniyor...")
-        rapor = f"📊 **GÜNCEL {txt} SONUÇLARI** 📊\n\n"
-        for ticker in list(POPULAR_MARKETS.keys())[:12]:  
-            rapor += analyze_market_sync(ticker, tf) + "\n" + "-"*15 + "\n"
+        await update.message.reply_text(f"🔄 {txt} yapiliyor, aktif sinyaller taraniyor...")
+        rapor = f"📊 **GÜNCEL {txt} SİNYALLERİ** 📊\n\n"
+        sinyal_var = False
+        for ticker in list(POPULAR_MARKETS.keys()):
+            res = analyze_market_sync(ticker, tf)
+            if res:
+                rapor += res + "\n" + "="*15 + "\n"
+                sinyal_var = True
+        if not sinyal_var: rapor += "⏳ Bu zaman diliminde net bir islem sinyali (BUY/SELL) bulunmadi. Piyasa su an belirsiz veya Notr durumda."
         await update.message.reply_text(rapor)
 
 def main():
