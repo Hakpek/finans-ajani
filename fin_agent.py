@@ -65,8 +65,8 @@ def get_db_win_rate(ticker):
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
-
-def analyze_market_sync(ticker, tf='1d'):
+        
+        def analyze_market_sync(ticker, tf='1d'):
     try:
         p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK'), '1y': ('5y', '3mo', 'YILLIK')}
         prd, ivl, tf_txt = p_map.get(tf, ('3mo', '1d', 'GUNLUK'))
@@ -110,7 +110,8 @@ def analyze_market_sync(ticker, tf='1d'):
         adet = max(int(50.0 / p), 1) if p < 50 else 1
         return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.2f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n⚙️ Onerilen Adet (Lot): {adet} Adet (1000$ Modeli)\n📊 RSI: {rsi:.2f}"
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
-        def get_highest_potential_report_sync(tf):
+
+def get_highest_potential_report_sync(tf):
     try:
         if tf == '1d': tk, nm, mt, rsn = "BZ=F", "Brent Petrol", "BRENT", "Bollinger alt bandi testi ve Stochastic asiri satim onayi."
         elif tf == '1wk': tk, nm, mt, rsn = "SI=F", "Ons Gumus", "XAGUSD", "Haber sentiment pozitifligi ve Altin/Gumus rasyosu dip donusu."
