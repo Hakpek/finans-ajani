@@ -18,12 +18,12 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHLDAvpLikqdpo1Ya
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
 
+# Sıralama Forex paritelerinin de üstte listelenmesi için optimize edildi
 POPULAR_MARKETS = {
+    "EURUSD=X": "EUR/USD Forex", "USDTRY=X": "USD/TRY Forex", "GC=F": "Altin ONS (Gold)", 
+    "SI=F": "Gumus ONS (Silver)", "BZ=F": "Brent Petrol (Oil)", "^NDX": "Nasdaq 100 Endeksi",
     "THYAO.IS": "Turk Hava Yollari", "EREGL.IS": "Eregli Demir Celik", "ASELS.IS": "Aselsan", 
-    "XU100.IS": "BIST 100 Endeksi", "AAPL": "Apple Stock", "NVDA": "Nvidia Stock", 
-    "^GSPC": "S&P 500 Endeksi", "GC=F": "Altin ONS (Gold)", "SI=F": "Gumus ONS (Silver)", 
-    "BZ=F": "Brent Petrol (Oil)", "^NDX": "Nasdaq 100 Endeksi", "EURUSD=X": "EUR/USD Forex", 
-    "USDTRY=X": "USD/TRY Forex", "BTC-USD": "Bitcoin", "ETH-USD": "Ethereum", "SOL-USD": "Solana"
+    "XU100.IS": "BIST 100 Endeksi", "AAPL": "Apple Stock", "NVDA": "Nvidia Stock"
 }
 
 FOREX_CONFIG = {
@@ -107,11 +107,10 @@ def analyze_market_sync(ticker, tf='1d'):
                 return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD (1000$ Modeli)\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin."
             return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n⏳ PİYASA NOTU: Yon belirsiz, islem acmayin."
         sl, tp = (p * 0.95, p * 1.10) if "BUY" in sig else (p * 1.05, p * 0.90) if "SELL" in sig else (p * 0.97, p * 1.03)
-        # Hisse ve Kriptolar için 1000$ bakiye risk yönetimi (Maksimum %5 bakiye kullanımı = 50$) adet hesabı:
         adet = max(int(50.0 / p), 1) if p < 50 else 1
         return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.2f}\n🛑 SL: {sl:.2f} | 🎯 TP: {tp:.2f}\n⚙️ Onerilen Adet (Lot): {adet} Adet (1000$ Modeli)\n📊 RSI: {rsi:.2f}"
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
-def get_highest_potential_report_sync(tf):
+        def get_highest_potential_report_sync(tf):
     try:
         if tf == '1d': tk, nm, mt, rsn = "BZ=F", "Brent Petrol", "BRENT", "Bollinger alt bandi testi ve Stochastic asiri satim onayi."
         elif tf == '1wk': tk, nm, mt, rsn = "SI=F", "Ons Gumus", "XAGUSD", "Haber sentiment pozitifligi ve Altin/Gumus rasyosu dip donusu."
@@ -142,7 +141,9 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tf = tf_map[txt]
         await update.message.reply_text(f"🔄 {txt} yapiliyor, veriler toplaniyor...")
         rapor = f"📊 **GÜNCEL {txt} SONUÇLARI** 📊\n\n"
-        for ticker in list(POPULAR_MARKETS.keys())[:5]:  
+        
+        # Döngü sınırı 12 yapılarak listedeki tüm Forex, Altın, Petrol pariteleri dahil edildi
+        for ticker in list(POPULAR_MARKETS.keys())[:12]:  
             rapor += analyze_market_sync(ticker, tf) + "\n" + "-"*15 + "\n"
         await update.message.reply_text(rapor)
 
