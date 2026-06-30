@@ -18,7 +18,6 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHLDAvpLikqdpo1Ya
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
 
-# Sıralama Forex paritelerinin de üstte listelenmesi için optimize edildi
 POPULAR_MARKETS = {
     "EURUSD=X": "EUR/USD Forex", "USDTRY=X": "USD/TRY Forex", "GC=F": "Altin ONS (Gold)", 
     "SI=F": "Gumus ONS (Silver)", "BZ=F": "Brent Petrol (Oil)", "^NDX": "Nasdaq 100 Endeksi",
@@ -43,6 +42,7 @@ def init_db():
         conn.commit(); conn.close()
     except: print("⚠️ Veritabanina baglanilamadi. Bot veritabanisiz modda calisacak.")
 init_db()
+
 def get_news_sentiment(ticker):
     try:
         news = yf.Ticker(ticker).news
@@ -141,8 +141,6 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tf = tf_map[txt]
         await update.message.reply_text(f"🔄 {txt} yapiliyor, veriler toplaniyor...")
         rapor = f"📊 **GÜNCEL {txt} SONUÇLARI** 📊\n\n"
-        
-        # Döngü sınırı 12 yapılarak listedeki tüm Forex, Altın, Petrol pariteleri dahil edildi
         for ticker in list(POPULAR_MARKETS.keys())[:12]:  
             rapor += analyze_market_sync(ticker, tf) + "\n" + "-"*15 + "\n"
         await update.message.reply_text(rapor)
@@ -159,3 +157,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+        
