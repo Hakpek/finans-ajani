@@ -18,29 +18,24 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHLDAvpLikqdpo1Ya
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
 
-# Ekran görüntünüzdeki tüm Forex ve Emtia pariteleri eklendi
+# Riskli, yüksek spreadli pariteler elendi; sadece teknik analize sadık majörler kaldı
 POPULAR_MARKETS = {
     "EURUSD=X": "EUR/USD Forex", "GBPUSD=X": "GBP/USD Forex", "USDCHF=X": "USD/CHF Forex",
-    "USDJPY=X": "USD/JPY Forex", "USDCNH=X": "USD/CNH Forex", "USDRUB=X": "USD/RUB Forex",
-    "AUDUSD=X": "AUD/USD Forex", "NZDUSD=X": "NZD/USD Forex", "USDCAD=X": "USD/CAD Forex",
-    "USDSEK=X": "USD/SEK Forex", "USDTRY=X": "USD/TRY Forex", "SI=F": "Gumus ONS (XAGUSD)",
-    "GC=F": "Altin ONS (XAUUSD)"
+    "USDJPY=X": "USD/JPY Forex", "AUDUSD=X": "AUD/USD Forex", "NZDUSD=X": "NZD/USD Forex", 
+    "USDCAD=X": "USD/CAD Forex", "GC=F": "Altin ONS (XAUUSD)", "SI=F": "Gumus ONS (XAGUSD)"
 }
 
+# Emtialar (Altın/Gümüş) için ters iğne koruması amacıyla stop çarpanları 2.5 katına çıkarıldı
 FOREX_CONFIG = {
-    "EURUSD=X": {"pip_size": 0.0001, "spread_pips": 1.5, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "GBPUSD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDCHF=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDJPY=X": {"pip_size": 0.01, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDCNH=X": {"pip_size": 0.0001, "spread_pips": 3.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDRUB=X": {"pip_size": 0.01, "spread_pips": 10.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "AUDUSD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "NZDUSD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDCAD=X": {"pip_size": 0.0001, "spread_pips": 2.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDSEK=X": {"pip_size": 0.0001, "spread_pips": 5.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "USDTRY=X": {"pip_size": 0.0001, "spread_pips": 20.0, "is_forex": True, "contract_size": 100000, "type": "fx"},
-    "GC=F": {"pip_size": 0.10, "spread_pips": 3.5, "is_forex": True, "contract_size": 100, "type": "commodity"},
-    "SI=F": {"pip_size": 0.01, "spread_pips": 2.5, "is_forex": True, "contract_size": 5000, "type": "commodity"}
+    "EURUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "GBPUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "USDCHF=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "USDJPY=X": {"pip_size": 0.01, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "AUDUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "NZDUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "USDCAD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
+    "GC=F": {"pip_size": 0.10, "is_forex": True, "contract_size": 100, "type": "commodity", "sl_mult": 2.8},
+    "SI=F": {"pip_size": 0.01, "is_forex": True, "contract_size": 5000, "type": "commodity", "sl_mult": 2.5}
 }
 
 def init_db():
@@ -51,7 +46,6 @@ def init_db():
         conn.commit(); conn.close()
     except: print("⚠️ Veritabanina baglanilamadi. Bot veritabanisiz modda calisacak.")
 init_db()
-
 def get_news_sentiment(ticker):
     try:
         news = yf.Ticker(ticker).news
@@ -68,12 +62,13 @@ def get_db_win_rate(ticker):
         conn = psycopg2.connect(DB_URL, connect_timeout=2)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status='PROFIT'", (ticker,))
-        w = cur.fetchone()
+        w = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IS NOT NULL AND status != 'PENDING'", (ticker,))
-        t = cur.fetchone()
+        t = cur.fetchone()[0]
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
+
 def analyze_market_sync(ticker, tf='1d'):
     try:
         p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK'), '1y': ('5y', '3mo', 'YILLIK')}
@@ -93,17 +88,18 @@ def analyze_market_sync(ticker, tf='1d'):
         n_sc, n_txt = get_news_sentiment(ticker)
         sc += (1 if n_sc > 0 else -1 if n_sc < 0 else 0)
         sig = "[STRONGBUY]" if sc >= 2 else "[BUY]" if sc >= 1 else "[SELL]" if sc <= -1 else "[STRONGSELL]" if sc <= -2 else "[NEUTRAL]"
-        
-        # İstediğiniz gibi NEUTRAL sinyallerini tamamen eliyoruz, rapor kalabalığı yapmıyor
         if sig == "[NEUTRAL]": return None
-        
         wr = get_db_win_rate(ticker)
-        cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "spread_pips": 0, "is_forex": False})
+        cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "is_forex": False, "sl_mult": 1.5})
         pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
-        sl_p = max(atr_p * 1.5, 12.0)
+        sl_p = max(atr_p * cfg["sl_mult"], 12.0)
         tp_p = sl_p * 1.5
-        if "BUY" in sig: sl, tp, mt, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", "PIYASA ISLEMI (BUY)"
-        else: sl, tp, mt, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", "PIYASA ISLEMI (SELL)"
+        if "BUY" in sig: 
+            sl, tp, mt, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", "PIYASA ISLEMI (BUY)"
+            tsl = p + (sl_p * 0.3 * pip) # İz süren stop tetik seviyesi
+        else: 
+            sl, tp, mt, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", "PIYASA ISLEMI (SELL)"
+            tsl = p - (sl_p * 0.3 * pip)
         try:
             conn = psycopg2.connect(DB_URL, connect_timeout=2)
             conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
@@ -113,16 +109,44 @@ def analyze_market_sync(ticker, tf='1d'):
         mc = (cfg["contract_size"] * lot) / 100 if cfg["type"] == "fx" else (cfg["contract_size"] * lot * p) / 100
         tk = ticker.replace("=X", "").replace("=F", "")
         stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
-        return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin."
+        return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin.\n🛡️ IZ SÜREN STOP (Kâr Kilitleme):\nFiyat {tsl:.4f} seviyesine ulastiginda, riskinizi sifirlamak icin SL degerinizi giris fiyatiniz olan '{p:.4f}' seviyesine tasiyin!"
     except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ']]
+    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen analiz etmek istediniz periyodu asagidaki menuden secin:", reply_markup=reply_markup)
+    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
+
+async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Kullanım: /kapat GBPUSD PROFIT veya /kapat XAUUSD LOSS
+    try:
+        tk = context.args[0] + "=X" if "USD" in context.args[0] and context.args[0] not in ["GC", "SI"] else context.args[0] + "=F" if context.args[0] in ["GC", "SI"] else context.args[0]
+        st = context.args[1].upper()
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("UPDATE signals SET status=%s WHERE id = (SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1)", (st, tk))
+        conn.commit(); conn.close()
+        await update.message.reply_text(f"✅ {context.args[0]} paritesindeki son islem veritabaninda '{st}' olarak guncellendi!")
+    except Exception as e:
+        await update.message.reply_text("❌ Hata! Lutfen komutu su sekilde kullanin:\n/kapat PARITE DURUM\nOrnek: `/kapat GBPUSD PROFIT` veya `/kapat XAUUSD LOSS`")
+
+async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN status='PROFIT' THEN 1 ELSE 0 END) FROM signals WHERE status IN ('PROFIT', 'LOSS')")
+        t, w = cur.fetchone()
+        conn.close()
+        if t == 0 or t is None:
+            await update.message.reply_text("📊 Henuz kapanmis bir islem kaydi bulunmuyor.")
+        else:
+            await update.message.reply_text(f"📊 **BOT PERFORMANS RAPORU** 📊\n\n✅ Toplam Kapanan Pozisyon: {t}\n🟢 Kazanc (PROFIT): {w}\n🔴 Kayip (LOSS): {t-w}\n🎯 Genel Basari Orani: %{(w/t)*100:.1f}")
+    except: await update.message.reply_text("⚠️ Veritabanina ulasilamadi.")
 
 async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
+    if txt == '📊 ISLEM ISTATISTIKLERI':
+        await istatistik_goster(update, context)
+        return
     tf_map = {'📊 GUNLUK ANALIZ': '1d', '📈 HAFTALIK ANALIZ': '1wk', '📉 AYLIK ANALIZ': '1mo', '🗓 YILLIK ANALIZ': '1y'}
     if txt in tf_map:
         tf = tf_map[txt]
@@ -134,7 +158,7 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if res:
                 rapor += res + "\n" + "="*15 + "\n"
                 sinyal_var = True
-        if not sinyal_var: rapor += "⏳ Bu zaman diliminde net bir islem sinyali (BUY/SELL) bulunmadi. Piyasa su an belirsiz veya Notr durumda."
+        if not sinyal_var: rapor += "⏳ Bu zaman diliminde net bir islem sinyali bulunmadi."
         await update.message.reply_text(rapor)
 
 def main():
@@ -143,6 +167,7 @@ def main():
     api_request = HTTPXRequest(connect_timeout=30.0, read_timeout=30.0)
     app = Application.builder().token(TELEGRAM_TOKEN).request(api_request).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("kapat", islem_kapat))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_isleyici))
     print("🚀 Bot basariyla calistirildi! Telegram'dan test edebilirsiniz.")
     app.run_polling()
