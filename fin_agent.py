@@ -171,6 +171,47 @@ async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: 
         await update.message.reply_text("⚠️ Veritabanina ulasilamadi.")
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
+
+async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        # Kullanıcı girdilerini güvenli bir şekilde dizi endekslerinden ayırıyoruz
+        secilen_parite = context.args[0].upper()
+        secilen_durum = context.args[1].upper()
+        
+        # MetaTrader isimlerini veritabanındaki uzantılı hallerine (yfinance formatına) çeviriyoruz
+        if secilen_parite in ["XAUUSD", "GC"]: tk = "GC=F"
+        elif secilen_parite in ["XAGUSD", "SI"]: tk = "SI=F"
+        elif secilen_parite in ["BRENT", "BZ"]: tk = "BZ=F"
+        else: tk = secilen_parite + "=X"
+        
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        # En son eklenen PENDING durumundaki ilgili pariteyi bulup güncelliyoruz
+        cur.execute("UPDATE signals SET status=%s WHERE id = (SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1)", (secilen_durum, tk))
+        conn.commit(); conn.close()
+        await update.message.reply_text(f"✅ {secilen_parite} veritabaninda '{secilen_durum}' olarak güncellendi!")
+    except Exception as e:
+        await update.message.reply_text("❌ Hata! Ornek kullanim:\n/kapat GBPUSD PROFIT\n/kapat XAUUSD LOSS")
+
+async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        # Harf büyüklüğüne bakılmaksızın tüm PROFIT ve LOSS verilerini Neon'dan sayıyoruz
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN UPPER(status)='PROFIT' THEN 1 ELSE 0 END) FROM signals WHERE UPPER(status) IN ('PROFIT', 'LOSS')")
+        t, w = cur.fetchone()
+        conn.close()
+        if t == 0 or t is None: 
+            await update.message.reply_text("📊 Henuz kapanmis bir islem kaydi bulunmuyor.")
+        else: 
+            await update.message.reply_text(f"📊 **BOT PERFORMANS RAPORU** 📊\n\n✅ Toplam Kapanan Pozisyon: {t}\n🟢 Kazanc (PROFIT): {w}\n🔴 Kayip (LOSS): {t-w}\n🎯 Genel Basari Orani: %{(w/t)*100:.1f}")
+    except: 
+        await update.message.reply_text("⚠️ Veritabanina ulasilamadi.")
+
 async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     if txt == '📊 ISLEM ISTATISTIKLERI':
