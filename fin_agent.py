@@ -212,6 +212,60 @@ async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: 
         await update.message.reply_text("⚠️ Veritabanina ulasilamadi.")
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
+
+async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text("❌ Eksik bilgi! Ornek kullanim:\n/kapat GBPUSD PROFIT\n/kapat XAUUSD LOSS")
+            return
+            
+        secilen_parite = context.args[0].upper()
+        secilen_durum = context.args[1].upper()
+        
+        if secilen_parite in ["XAUUSD", "GC"]: tk = "GC=F"
+        elif secilen_parite in ["XAGUSD", "SI"]: tk = "SI=F"
+        elif secilen_parite in ["BRENT", "BZ"]: tk = "BZ=F"
+        else: tk = secilen_parite + "=X"
+        
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        
+        # Once bekleyen pozisyon var mi diye bakiyoruz
+        cur.execute("SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1", (tk,))
+        row = cur.fetchone()
+        
+        if row:
+            # Bekleyen pozisyon varsa durumunu PROFIT/LOSS olarak guncelliyoruz
+            cur.execute("UPDATE signals SET status=%s WHERE id=%s", (secilen_durum, row[0]))
+        else:
+            # Gecmis testleri yapabilmeniz icin bekleyen pozisyon yoksa bile sifirdan kayit ekliyoruz
+            zaman = datetime.now().strftime("%m-%d %H:%M")
+            cur.execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s, 'manual', 0, 0, 0, %s, %s)", (tk, zaman, secilen_durum))
+            
+        conn.commit()
+        conn.close()
+        await update.message.reply_text(f"✅ {secilen_parite} veritabaninda '{secilen_durum}' olarak güncellendi!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Veritabanı hatası oluştu: {str(e)}")
+
+async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN UPPER(status)='PROFIT' THEN 1 ELSE 0 END) FROM signals WHERE UPPER(status) IN ('PROFIT', 'LOSS')")
+        t, w = cur.fetchone()
+        conn.close()
+        if t == 0 or t is None: 
+            await update.message.reply_text("📊 Henuz kapanmis bir islem kaydi bulunmuyor.")
+        else: 
+            await update.message.reply_text(f"📊 **BOT PERFORMANS RAPORU** 📊\n\n✅ Toplam Kapanan Pozisyon: {t}\n🟢 Kazanc (PROFIT): {w}\n🔴 Kayip (LOSS): {t-w}\n🎯 Genel Basari Orani: %{(w/t)*100:.1f}")
+    except Exception as e: 
+        await update.message.reply_text(f"⚠️ Veritabanina ulasilamadi: {str(e)}")
+
 async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     if txt == '📊 ISLEM ISTATISTIKLERI':
