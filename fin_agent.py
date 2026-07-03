@@ -18,14 +18,12 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHLDAvpLikqdpo1Ya
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
 
-# Riskli, yüksek spreadli pariteler elendi; sadece teknik analize sadık majörler kaldı
 POPULAR_MARKETS = {
     "EURUSD=X": "EUR/USD Forex", "GBPUSD=X": "GBP/USD Forex", "USDCHF=X": "USD/CHF Forex",
     "USDJPY=X": "USD/JPY Forex", "AUDUSD=X": "AUD/USD Forex", "NZDUSD=X": "NZD/USD Forex", 
     "USDCAD=X": "USD/CAD Forex", "GC=F": "Altin ONS (XAUUSD)", "SI=F": "Gumus ONS (XAGUSD)"
 }
 
-# Emtialar (Altın/Gümüş) için ters iğne koruması amacıyla stop çarpanları 2.5 katına çıkarıldı
 FOREX_CONFIG = {
     "EURUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
     "GBPUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
@@ -87,47 +85,47 @@ def analyze_market_sync(ticker, tf='1d'):
         sc = (1 if rsi < 45 else -1 if rsi > 55 else 0) + (1 if macd > macd_s else -1) + (1 if p <= bb_h * 0.52 else -1 if p >= bb_l * 0.48 else 0) + (1 if stoch < 40 else -1 if stoch > 60 else 0)
         n_sc, n_txt = get_news_sentiment(ticker)
         sc += (1 if n_sc > 0 else -1 if n_sc < 0 else 0)
-        sig = "[STRONGBUY]" if sc >= 2 else "[BUY]" if sc >= 1 else "[SELL]" if sc <= -1 else "[STRONGSELL]" if sc <= -2 else "[NEUTRAL]"
-        if sig == "[NEUTRAL]": return None
-        wr = get_db_win_rate(ticker)
+        
+        sig = "strong buy" if sc >= 2 else "buy" if sc >= 1 else "sell" if sc <= -1 else "strong sell" if sc <= -2 else "neutral"
+        if sig == "neutral": return None
+        
         cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "is_forex": False, "sl_mult": 1.5})
         pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
         sl_p = max(atr_p * cfg["sl_mult"], 12.0)
         tp_p = sl_p * 1.5
-        if "BUY" in sig: 
-            sl, tp, mt, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa Fiyatindan AL (Buy)", "PIYASA ISLEMI (BUY)"
-            tsl = p + (sl_p * 0.3 * pip) # İz süren stop tetik seviyesi
-        else: 
-            sl, tp, mt, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa Fiyatindan SAT (Sell)", "PIYASA ISLEMI (SELL)"
-            tsl = p - (sl_p * 0.3 * pip)
+        
+        if "buy" in sig: sl, tp, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa islemi"
+        else: sl, tp, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa islemi"
+            
         try:
             conn = psycopg2.connect(DB_URL, connect_timeout=2)
             conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
             conn.commit(); conn.close()
         except: pass
+        
         lot = max(min(20.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip if cfg["type"] == "commodity" else cfg["contract_size"])), 2.0), 0.01)
-        mc = (cfg["contract_size"] * lot) / 100 if cfg["type"] == "fx" else (cfg["contract_size"] * lot * p) / 100
         tk = ticker.replace("=X", "").replace("=F", "")
         stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
-        return f"📈 Sembol: {ticker}\nPeriyot: {tf_txt} | Basari: {wr}\n📢 SİNYAL: {sig}\n💵 Fiyat: {p:.4f}\n📰 Haber: {n_txt}\n🛑 SL: {sl:.4f} | 🎯 TP: {tp:.4f}\n⚙️ Lot: {lot:.2f} | 💰 Maliyet: ~{mc:.2f} USD\n----------------------------------------\n🛠 MT REHBERI:\n1. '{stk}' paritesini acin.\n2. Islem Turu: '{mt_tur}' secin.\n3. Hacim (Lot): '{lot:.2f}' yazin.\n4. SL: '{sl:.4f}' | TP: '{tp:.4f}' girin.\n5. '{mt}' butonuna basin.\n🛡️ IZ SÜREN STOP (Kâr Kilitleme):\nFiyat {tsl:.4f} seviyesine ulastiginda, riskinizi sifirlamak icin SL degerinizi giris fiyatiniz olan '{p:.4f}' seviyesine tasiyin!"
-    except Exception as e: return f"❌ {ticker}: Hata. ({str(e)})\n"
+        
+        return f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
+    except: return None
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
 
 async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Kullanım: /kapat GBPUSD PROFIT veya /kapat XAUUSD LOSS
     try:
-        tk = context.args[0] + "=X" if "USD" in context.args[0] and context.args[0] not in ["GC", "SI"] else context.args[0] + "=F" if context.args[0] in ["GC", "SI"] else context.args[0]
+        param = context.args[0].upper()
         st = context.args[1].upper()
+        tk = param + "=X" if "USD" in param and param not in ["GC", "SI"] else param + "=F" if param in ["GC", "SI"] else param
         conn = psycopg2.connect(DB_URL, connect_timeout=3)
         cur = conn.cursor()
         cur.execute("UPDATE signals SET status=%s WHERE id = (SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1)", (st, tk))
         conn.commit(); conn.close()
-        await update.message.reply_text(f"✅ {context.args[0]} paritesindeki son islem veritabaninda '{st}' olarak guncellendi!")
-    except Exception as e:
-        await update.message.reply_text("❌ Hata! Lutfen komutu su sekilde kullanin:\n/kapat PARITE DURUM\nOrnek: `/kapat GBPUSD PROFIT` veya `/kapat XAUUSD LOSS`")
+        await update.message.reply_text(f"✅ {param} veritabaninda '{st}' olarak güncellendi!")
+    except:
+        await update.message.reply_text("❌ Hata! Ornek kullanim: `/kapat GBPUSD PROFIT` veya `/kapat GC LOSS`")
 
 async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -136,10 +134,8 @@ async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cur.execute("SELECT COUNT(*), SUM(CASE WHEN status='PROFIT' THEN 1 ELSE 0 END) FROM signals WHERE status IN ('PROFIT', 'LOSS')")
         t, w = cur.fetchone()
         conn.close()
-        if t == 0 or t is None:
-            await update.message.reply_text("📊 Henuz kapanmis bir islem kaydi bulunmuyor.")
-        else:
-            await update.message.reply_text(f"📊 **BOT PERFORMANS RAPORU** 📊\n\n✅ Toplam Kapanan Pozisyon: {t}\n🟢 Kazanc (PROFIT): {w}\n🔴 Kayip (LOSS): {t-w}\n🎯 Genel Basari Orani: %{(w/t)*100:.1f}")
+        if t == 0 or t is None: await update.message.reply_text("📊 Henuz kapanmis bir islem kaydi bulunmuyor.")
+        else: await update.message.reply_text(f"📊 **BOT PERFORMANS RAPORU** 📊\n\n✅ Toplam Kapanan Pozisyon: {t}\n🟢 Kazanc (PROFIT): {w}\n🔴 Kayip (LOSS): {t-w}\n🎯 Genel Basari Orani: %{(w/t)*100:.1f}")
     except: await update.message.reply_text("⚠️ Veritabanina ulasilamadi.")
 
 async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -151,15 +147,13 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if txt in tf_map:
         tf = tf_map[txt]
         await update.message.reply_text(f"🔄 {txt} yapiliyor, aktif sinyaller taraniyor...")
-        rapor = f"📊 **GÜNCEL {txt} SİNYALLERİ** 📊\n\n"
         sinyal_var = False
         for ticker in list(POPULAR_MARKETS.keys()):
             res = analyze_market_sync(ticker, tf)
             if res:
-                rapor += res + "\n" + "="*15 + "\n"
+                await update.message.reply_text(res)
                 sinyal_var = True
-        if not sinyal_var: rapor += "⏳ Bu zaman diliminde net bir islem sinyali bulunmadi."
-        await update.message.reply_text(rapor)
+        if not sinyal_var: await update.message.reply_text("⏳ Bu zaman diliminde net bir islem sinyali bulunmadi.")
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
