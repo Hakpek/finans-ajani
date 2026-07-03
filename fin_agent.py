@@ -266,6 +266,93 @@ async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e: 
         await update.message.reply_text(f"⚠️ Veritabanina ulasilamadi: {str(e)}")
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+    await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
+
+async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text("❌ Eksik bilgi! Ornek kullanim:\n/kapat GBPUSD PROFIT\n/kapat XAUUSD LOSS")
+            return
+            
+        secilen_parite = context.args[0].upper()
+        secilen_durum = context.args[1].upper()
+        
+        if secilen_parite in ["XAUUSD", "GC"]: tk = "GC=F"
+        elif secilen_parite in ["XAGUSD", "SI"]: tk = "SI=F"
+        elif secilen_parite in ["BRENT", "BZ"]: tk = "BZ=F"
+        else: tk = secilen_parite + "=X"
+        
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1", (tk,))
+        row = cursor.fetchone()
+        
+        if row:
+            cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (secilen_durum, row[0]))
+        else:
+            zaman = datetime.now().strftime("%m-%d %H:%M")
+            cursor.execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s, 'manual', 0, 0, 0, %s, %s)", (tk, zaman, secilen_durum))
+            
+        conn.commit()
+        conn.close()
+        await update.message.reply_text(f"✅ {secilen_parite} veritabaninda '{secilen_durum}' olarak güncellendi!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Veritabanı hatası oluştu: {str(e)}")
+
+async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        conn = psycopg2.connect(DB_URL, connect_timeout=3)
+        cur = conn.cursor()
+        
+        # 1. Genel özet verilerini çekiyoruz
+        cur.execute("SELECT COUNT(*), SUM(CASE WHEN UPPER(status)='PROFIT' THEN 1 ELSE 0 END) FROM signals WHERE UPPER(status) IN ('PROFIT', 'LOSS')")
+        t, w = cur.fetchone()
+        
+        if t == 0 or t is None: 
+            await update.message.reply_text("📊 Henuz kapanmis bir islem kaydi bulunmuyor.")
+            conn.close()
+            return
+            
+        rapor = f"📊 **BOT PERFORMANS RAPORU** 📊\n\n"
+        rapor += f"✅ Toplam Kapanan Pozisyon: {t}\n"
+        rapor += f"🟢 Genel Kazanc (PROFIT): {w}\n"
+        rapor += f"🔴 Genel Kayip (LOSS): {t-w}\n"
+        rapor += f"🎯 Genel Basari Orani: %{(w/t)*100:.1f}\n"
+        rapor += "──────────────────────\n"
+        rapor += "🗂 **YATIRIM ARACI BAZLI ANALİZ**\n\n"
+        
+        # 2. Her pariteye özel başarı istatistiklerini gruplayarak çekiyoruz
+        cur.execute("""
+            SELECT ticker, 
+                   COUNT(*), 
+                   SUM(CASE WHEN UPPER(status)='PROFIT' THEN 1 ELSE 0 END) 
+            FROM signals 
+            WHERE UPPER(status) IN ('PROFIT', 'LOSS') 
+            GROUP BY ticker 
+            ORDER BY COUNT(*) DESC
+        """)
+        parite_listesi = cur.fetchall()
+        conn.close()
+        
+        for row in parite_listesi:
+            raw_tk, p_toplam, p_kazanc = row
+            # Veritabanı uzantılarını kullanıcı dostu isimlere çeviriyoruz (GC=F -> XAUUSD gibi)
+            p_tk = raw_tk.replace("=X", "").replace("=F", "")
+            p_stk = "XAUUSD" if p_tk == "GC" else "XAGUSD" if p_tk == "SI" else "BRENT" if p_tk == "BZ" else p_tk
+            
+            p_kayip = p_toplam - p_kazanc
+            p_yuzde = (p_kazanc / p_toplam) * 100
+            
+            rapor += f"▪️ **{p_stk}**: %{p_yuzde:.1f} Başarı ({p_kazanc}🟢 / {p_kayip}🔴)\n"
+            
+        await update.message.reply_text(rapor)
+    except Exception as e: 
+        await update.message.reply_text(f"⚠️ Veritabanina ulasilamadi: {str(e)}")
+
 async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = update.message.text
     if txt == '📊 ISLEM ISTATISTIKLERI':
