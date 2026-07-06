@@ -14,7 +14,7 @@ def run_flask():
     try: flask_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
     except Exception as e: print(f"Flask baslatilamadi: {e}")
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHTR6fHwopoFSeg8yHv2kyjNMB-dvvh0m8")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAE6EWGWzp9jcc94br3u81jMokTz_c1xVnw")
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
 
