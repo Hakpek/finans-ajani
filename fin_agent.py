@@ -19,14 +19,12 @@ DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhos
 MY_CHAT_ID = 965495144 
 MACRODROID_WEBHOOK_URL = "https://macrodroid.com"
 
-# Sadece en başarılı olduğumuz enstrümanlara odaklanıyoruz
 POPULAR_MARKETS = {
     "EURUSD=X": "EUR/USD Forex", 
     "USDCAD=X": "USD/CAD Forex", 
     "GC=F": "Altin ONS (XAUUSD)"
 }
 
-# 1000$ Bakiye ile günlük 50$ kâr hedefi için nokta atışı pips bazlı dar TP/SL ve yüksek lot konfigürasyonu
 FOREX_CONFIG = {
     "EURUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "fixed_lot": 0.20, "tp_pips": 15, "sl_pips": 20},
     "USDCAD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "fixed_lot": 0.15, "tp_pips": 20, "sl_pips": 25},
@@ -41,6 +39,7 @@ def init_db():
         conn.commit(); conn.close()
     except: print("⚠️ Veritabanina baglanilamadi. Bot veritabanisiz modda calisacak.")
 init_db()
+
 def get_news_sentiment(ticker):
     try:
         news = yf.Ticker(ticker).news
@@ -57,21 +56,18 @@ def get_db_win_rate(ticker):
         conn = psycopg2.connect(DB_URL, connect_timeout=2)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status='PROFIT'", (ticker,))
-        w = cur.fetchone()[0]
+        w = cur.fetchone()
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IS NOT NULL AND status != 'PENDING'", (ticker,))
-        t = cur.fetchone()[0]
+        t = cur.fetchone()
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
-
 def analyze_market_sync(ticker, tf='1h'):
     try:
-        # Gerçekçi ve hızlı açılıp kapanma için varsayılan periyot SAATLİK (1h) grafiklere çekildi
         p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1h': ('7d', '1h', 'SAATLIK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK')}
         prd, ivl, tf_txt = p_map.get(tf, ('7d', '1h', 'SAATLIK'))
         df = yf.Ticker(ticker).history(period=prd, interval=ivl)
         if df.empty or len(df) < 10: return None
-        
         df['RSI'] = ta.momentum.rsi(df['Close'])
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_S'] = ta.trend.macd_signal(df['Close'])
@@ -79,40 +75,29 @@ def analyze_market_sync(ticker, tf='1h'):
         df['BB_H'] = ta.volatility.bollinger_hband(df['Close'])
         df['BB_L'] = ta.volatility.bollinger_lband(df['Close'])
         df['STOCH'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'])
-        
         p, rsi, macd, macd_s = df['Close'].iloc[-1], df['RSI'].iloc[-1], df['MACD'].iloc[-1], df['MACD_S'].iloc[-1]
         bb_h, bb_l, stoch = df['BB_H'].iloc[-1], df['BB_L'].iloc[-1], df['STOCH'].iloc[-1]
-        
         sc = (1 if rsi < 45 else -1 if rsi > 55 else 0) + (1 if macd > macd_s else -1) + (1 if p <= bb_h * 0.52 else -1 if p >= bb_l * 0.48 else 0) + (1 if stoch < 40 else -1 if stoch > 60 else 0)
         n_sc, n_txt = get_news_sentiment(ticker)
         sc += (1 if n_sc > 0 else -1 if n_sc < 0 else 0)
-        
         sig = "strong buy" if sc >= 2 else "buy" if sc >= 1 else "sell" if sc <= -1 else "strong sell" if sc <= -2 else "neutral"
         if sig == "neutral": return None
-        
         cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "is_forex": False, "fixed_lot": 0.01, "tp_pips": 20, "sl_pips": 25})
         pip = cfg["pip_size"]
-        
-        # Matematiksel kesin hedefler (Pips bazlı tam uyum)
-        if "buy" in sig: 
-            sl = p - (cfg["sl_pips"] * pip)
-            tp = p + (cfg["tp_pips"] * pip)
-            mt_tur = "Piyasa islemi"
-        else: 
-            sl = p + (cfg["sl_pips"] * pip)
-            tp = p - (cfg["tp_pips"] * pip)
-            mt_tur = "Piyasa islemi"
-            
+        if "buy" in sig: sl, tp, mt_tur = p - (cfg["sl_pips"] * pip), p + (cfg["tp_pips"] * pip), "Piyasa islemi"
+        else: sl, tp, mt_tur = p + (cfg["sl_pips"] * pip), p - (cfg["tp_pips"] * pip), "Piyasa islemi"
         try:
             conn = psycopg2.connect(DB_URL, connect_timeout=2)
             conn.cursor().execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s,%s,%s,%s,%s,%s,'PENDING')", (ticker, sig, p, sl, tp, datetime.now().strftime("%m-%d %H:%M")))
             conn.commit(); conn.close()
         except: pass
-        
         lot = cfg["fixed_lot"]
         tk = ticker.replace("=X", "").replace("=F", "")
         stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
-        async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        return f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
+    except: return None
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 SAATLIK ANALIZ', '📊 GUNLUK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
@@ -129,7 +114,12 @@ async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else: tk = secilen_parite + "=X"
         conn = psycopg2.connect(DB_URL, connect_timeout=3)
         cursor = conn.cursor()
-        cursor.execute("UPDATE signals SET status=%s WHERE id = (SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1)", (secilen_durum, tk))
+        cursor.execute("SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1", (tk,))
+        row = cursor.fetchone()
+        if row: cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (secilen_durum, row[0]))
+        else:
+            zaman = datetime.now().strftime("%m-%d %H:%M")
+            cursor.execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s, 'manual', 0, 0, 0, %s, %s)", (tk, zaman, secilen_durum))
         conn.commit(); conn.close()
         await update.message.reply_text(f"✅ {secilen_parite} veritabaninda '{secilen_durum}' olarak güncellendi!")
     except Exception as e: await update.message.reply_text(f"❌ Hata: {str(e)}")
@@ -174,8 +164,7 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 requests.post(MACRODROID_WEBHOOK_URL, json={"mesat_metni": birlesik_metin}, timeout=5)
                 await update.message.reply_text("📲 Sinyaller basariyle Macrodroid Webhook'una gonderildi!")
-            except Exception as e:
-                await update.message.reply_text(f"⚠️ Webhook hatasi: {str(e)}")
+            except Exception as e: await update.message.reply_text(f"⚠️ Webhook hatasi: {str(e)}")
         else: await update.message.reply_text("⏳ Bu zaman diliminde net bir islem sinyali bulunmadi.")
 
 def main():
@@ -191,6 +180,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-        return f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
-    except: return None
