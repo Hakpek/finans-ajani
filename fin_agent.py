@@ -94,7 +94,9 @@ def analyze_market_sync(ticker, tf='1h'):
         lot = cfg["fixed_lot"]
         tk = ticker.replace("=X", "").replace("=F", "")
         stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
-        return f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
+                # MacroDroid'in pürüzsüz kırpabilmesi için saf yazılım dili şablonu (Parça 2'nin en altı)
+        return f"sembol={stk}&tip={mt_tur}&islem={sig}&lot={lot:.2f}&sl={sl:.4f}&tp={tp:.4f}"
+ f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
     except: return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
