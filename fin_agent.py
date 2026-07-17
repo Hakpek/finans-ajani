@@ -14,29 +14,23 @@ def run_flask():
     try: flask_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
     except Exception as e: print(f"Flask baslatilamadi: {e}")
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAE6EWGWzp9jcc94br3u81jMokTz_c1xVnw")
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8714335607:AAHLDAvpLikqdpo1Ya0XVtKJeZTcjht7whg")
 DB_URL = os.environ.get("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/postgres")
 MY_CHAT_ID = 965495144 
+MACRODROID_WEBHOOK_URL = "https://macrodroid.com"
 
-# Macrodroid Webhook Linkiniz sisteme entegre edildi
-MACRODROID_WEBHOOK_URL = "https://trigger.macrodroid.com/7bba47eb-a132-4ffe-bf1b-3e970116a661/forex_signal"
-
+# Sadece en başarılı olduğumuz enstrümanlara odaklanıyoruz
 POPULAR_MARKETS = {
-    "EURUSD=X": "EUR/USD Forex", "GBPUSD=X": "GBP/USD Forex", "USDCHF=X": "USD/CHF Forex",
-    "USDJPY=X": "USD/JPY Forex", "AUDUSD=X": "AUD/USD Forex", "NZDUSD=X": "NZD/USD Forex", 
-    "USDCAD=X": "USD/CAD Forex", "GC=F": "Altin ONS (XAUUSD)", "SI=F": "Gumus ONS (XAGUSD)"
+    "EURUSD=X": "EUR/USD Forex", 
+    "USDCAD=X": "USD/CAD Forex", 
+    "GC=F": "Altin ONS (XAUUSD)"
 }
 
+# 1000$ Bakiye ile günlük 50$ kâr hedefi için nokta atışı pips bazlı dar TP/SL ve yüksek lot konfigürasyonu
 FOREX_CONFIG = {
-    "EURUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "GBPUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "USDCHF=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "USDJPY=X": {"pip_size": 0.01, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "AUDUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "NZDUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "USDCAD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "sl_mult": 1.5},
-    "GC=F": {"pip_size": 0.10, "is_forex": True, "contract_size": 100, "type": "commodity", "sl_mult": 2.8},
-    "SI=F": {"pip_size": 0.01, "is_forex": True, "contract_size": 5000, "type": "commodity", "sl_mult": 2.5}
+    "EURUSD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "fixed_lot": 0.20, "tp_pips": 15, "sl_pips": 20},
+    "USDCAD=X": {"pip_size": 0.0001, "is_forex": True, "contract_size": 100000, "type": "fx", "fixed_lot": 0.15, "tp_pips": 20, "sl_pips": 25},
+    "GC=F": {"pip_size": 0.10, "is_forex": True, "contract_size": 100, "type": "commodity", "fixed_lot": 0.05, "tp_pips": 45, "sl_pips": 60}
 }
 
 def init_db():
@@ -63,19 +57,21 @@ def get_db_win_rate(ticker):
         conn = psycopg2.connect(DB_URL, connect_timeout=2)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status='PROFIT'", (ticker,))
-        w = cur.fetchone()
+        w = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM signals WHERE ticker=%s AND status IS NOT NULL AND status != 'PENDING'", (ticker,))
-        t = cur.fetchone()
+        t = cur.fetchone()[0]
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
 
-def analyze_market_sync(ticker, tf='1d'):
+def analyze_market_sync(ticker, tf='1h'):
     try:
-        p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK'), '1y': ('5y', '3mo', 'YILLIK')}
-        prd, ivl, tf_txt = p_map.get(tf, ('3mo', '1d', 'GUNLUK'))
+        # Gerçekçi ve hızlı açılıp kapanma için varsayılan periyot SAATLİK (1h) grafiklere çekildi
+        p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1h': ('7d', '1h', 'SAATLIK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK')}
+        prd, ivl, tf_txt = p_map.get(tf, ('7d', '1h', 'SAATLIK'))
         df = yf.Ticker(ticker).history(period=prd, interval=ivl)
         if df.empty or len(df) < 10: return None
+        
         df['RSI'] = ta.momentum.rsi(df['Close'])
         df['MACD'] = ta.trend.macd(df['Close'])
         df['MACD_S'] = ta.trend.macd_signal(df['Close'])
@@ -83,8 +79,10 @@ def analyze_market_sync(ticker, tf='1d'):
         df['BB_H'] = ta.volatility.bollinger_hband(df['Close'])
         df['BB_L'] = ta.volatility.bollinger_lband(df['Close'])
         df['STOCH'] = ta.momentum.stoch(df['High'], df['Low'], df['Close'])
+        
         p, rsi, macd, macd_s = df['Close'].iloc[-1], df['RSI'].iloc[-1], df['MACD'].iloc[-1], df['MACD_S'].iloc[-1]
-        bb_h, bb_l, stoch, atr = df['BB_H'].iloc[-1], df['BB_L'].iloc[-1], df['STOCH'].iloc[-1], df['ATR'].iloc[-1]
+        bb_h, bb_l, stoch = df['BB_H'].iloc[-1], df['BB_L'].iloc[-1], df['STOCH'].iloc[-1]
+        
         sc = (1 if rsi < 45 else -1 if rsi > 55 else 0) + (1 if macd > macd_s else -1) + (1 if p <= bb_h * 0.52 else -1 if p >= bb_l * 0.48 else 0) + (1 if stoch < 40 else -1 if stoch > 60 else 0)
         n_sc, n_txt = get_news_sentiment(ticker)
         sc += (1 if n_sc > 0 else -1 if n_sc < 0 else 0)
@@ -92,13 +90,18 @@ def analyze_market_sync(ticker, tf='1d'):
         sig = "strong buy" if sc >= 2 else "buy" if sc >= 1 else "sell" if sc <= -1 else "strong sell" if sc <= -2 else "neutral"
         if sig == "neutral": return None
         
-        cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "is_forex": False, "sl_mult": 1.5})
-        pip, atr_p = cfg["pip_size"], atr / cfg["pip_size"]
-        sl_p = max(atr_p * cfg["sl_mult"], 12.0)
-        tp_p = sl_p * 1.5
+        cfg = FOREX_CONFIG.get(ticker, {"pip_size": 0.01, "is_forex": False, "fixed_lot": 0.01, "tp_pips": 20, "sl_pips": 25})
+        pip = cfg["pip_size"]
         
-        if "buy" in sig: sl, tp, mt_tur = p - (sl_p * pip), p + (tp_p * pip), "Piyasa islemi"
-        else: sl, tp, mt_tur = p + (sl_p * pip), p - (tp_p * pip), "Piyasa islemi"
+        # Matematiksel kesin hedefler (Pips bazlı tam uyum)
+        if "buy" in sig: 
+            sl = p - (cfg["sl_pips"] * pip)
+            tp = p + (cfg["tp_pips"] * pip)
+            mt_tur = "Piyasa islemi"
+        else: 
+            sl = p + (cfg["sl_pips"] * pip)
+            tp = p - (cfg["tp_pips"] * pip)
+            mt_tur = "Piyasa islemi"
             
         try:
             conn = psycopg2.connect(DB_URL, connect_timeout=2)
@@ -106,36 +109,27 @@ def analyze_market_sync(ticker, tf='1d'):
             conn.commit(); conn.close()
         except: pass
         
-        lot = max(min(20.0 / (sl_p * (10.0 if cfg["type"] == "fx" else cfg["contract_size"] * pip if cfg["type"] == "commodity" else cfg["contract_size"])), 2.0), 0.01)
+        lot = cfg["fixed_lot"]
         tk = ticker.replace("=X", "").replace("=F", "")
         stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
-        
-        return f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
-    except: return None
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [['📊 GUNLUK ANALIZ', '📈 HAFTALIK ANALIZ'], ['📉 AYLIK ANALIZ', '🗓 YILLIK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
+        async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [['📊 SAATLIK ANALIZ', '📊 GUNLUK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text("🤖 Yapay Zeka Destekli Finans Ajanina Hos Geldiniz!\n\nLutfen bir komut secin:", reply_markup=reply_markup)
 
 async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.args or len(context.args) < 2:
-            await update.message.reply_text("❌ Eksik bilgi! Örn: /kapat GBPUSD PROFIT")
+            await update.message.reply_text("❌ Eksik bilgi! Örn: /kapat EURUSD PROFIT")
             return
         secilen_parite = context.args[0].upper()
         secilen_durum = context.args[1].upper()
         if secilen_parite in ["XAUUSD", "GC"]: tk = "GC=F"
         elif secilen_parite in ["XAGUSD", "SI"]: tk = "SI=F"
-        elif secilen_parite in ["BRENT", "BZ"]: tk = "BZ=F"
         else: tk = secilen_parite + "=X"
         conn = psycopg2.connect(DB_URL, connect_timeout=3)
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1", (tk,))
-        row = cursor.fetchone()
-        if row: cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (secilen_durum, row[0]))
-        else:
-            zaman = datetime.now().strftime("%m-%d %H:%M")
-            cursor.execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s, 'manual', 0, 0, 0, %s, %s)", (tk, zaman, secilen_durum))
+        cursor.execute("UPDATE signals SET status=%s WHERE id = (SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1)", (secilen_durum, tk))
         conn.commit(); conn.close()
         await update.message.reply_text(f"✅ {secilen_parite} veritabaninda '{secilen_durum}' olarak güncellendi!")
     except Exception as e: await update.message.reply_text(f"❌ Hata: {str(e)}")
@@ -155,7 +149,7 @@ async def istatistik_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for row in parite_listesi:
             raw_tk, p_toplam, p_kazanc = row
             p_tk = raw_tk.replace("=X", "").replace("=F", "")
-            p_stk = "XAUUSD" if p_tk == "GC" else "XAGUSD" if p_tk == "SI" else "BRENT" if p_tk == "BZ" else p_tk
+            p_stk = "XAUUSD" if p_tk == "GC" else p_tk
             rapor += f"▪️ **{p_stk}**: %{(p_kazanc/p_toplam)*100:.1f} Başarı ({p_kazanc}🟢 / {p_toplam-p_kazanc}🔴)\n"
         await update.message.reply_text(rapor)
     except Exception as e: await update.message.reply_text(f"⚠️ Hata: {str(e)}")
@@ -165,29 +159,24 @@ async def menu_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if txt == '📊 ISLEM ISTATISTIKLERI':
         await istatistik_goster(update, context)
         return
-    tf_map = {'📊 GUNLUK ANALIZ': '1d', '📈 HAFTALIK ANALIZ': '1wk', '📉 AYLIK ANALIZ': '1mo', '🗓 YILLIK ANALIZ': '1y'}
+    tf_map = {'📊 SAATLIK ANALIZ': '1h', '📊 GUNLUK ANALIZ': '1d'}
     if txt in tf_map:
         tf = tf_map[txt]
         await update.message.reply_text(f"🔄 {txt} yapiliyor, aktif sinyaller taraniyor...")
-        
         aktif_sinyaller = []
         for ticker in list(POPULAR_MARKETS.keys()):
             res = analyze_market_sync(ticker, tf)
             if res:
                 aktif_sinyaller.append(res)
                 await update.message.reply_text(res)
-                
-        # Sinyaller oluştuktan sonra Macrodroid Webhook formatına uygun JSON paketi hazırlanıp gönderiliyor
         if aktif_sinyaller:
             birlesik_metin = "\n===\n".join(aktif_sinyaller)
-            json_paketi = {"mesat_metni": birlesik_metin} # İsteğiniz üzere tam anahtar ismi: 'mesat_metni'
             try:
-                requests.post(MACRODROID_WEBHOOK_URL, json=json_paketi, timeout=5)
+                requests.post(MACRODROID_WEBHOOK_URL, json={"mesat_metni": birlesik_metin}, timeout=5)
                 await update.message.reply_text("📲 Sinyaller basariyle Macrodroid Webhook'una gonderildi!")
             except Exception as e:
-                await update.message.reply_text(f"⚠️ Webhook gonderilirken hata olustu: {str(e)}")
-        else:
-            await update.message.reply_text("⏳ Bu zaman diliminde net bir islem sinyali bulunmadi.")
+                await update.message.reply_text(f"⚠️ Webhook hatasi: {str(e)}")
+        else: await update.message.reply_text("⏳ Bu zaman diliminde net bir islem sinyali bulunmadi.")
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
@@ -202,3 +191,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+        return f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
+    except: return None
