@@ -39,7 +39,6 @@ def init_db():
         conn.commit(); conn.close()
     except: print("⚠️ Veritabanina baglanilamadi. Bot veritabanisiz modda calisacak.")
 init_db()
-
 def get_news_sentiment(ticker):
     try:
         news = yf.Ticker(ticker).news
@@ -62,6 +61,7 @@ def get_db_win_rate(ticker):
         conn.close()
         return "Veri Yok (%0)" if t == 0 else f"%{(w/t)*100:.1f} Basari"
     except: return "Veri Yok (%0)"
+
 def analyze_market_sync(ticker, tf='1h'):
     try:
         p_map = {'1d': ('3mo', '1d', 'GUNLUK'), '1h': ('7d', '1h', 'SAATLIK'), '1wk': ('1y', '1wk', 'HAFTALIK'), '1mo': ('2y', '1mo', 'AYLIK')}
@@ -94,11 +94,8 @@ def analyze_market_sync(ticker, tf='1h'):
         lot = cfg["fixed_lot"]
         tk = ticker.replace("=X", "").replace("=F", "")
         stk = "XAUUSD" if tk == "GC" else "XAGUSD" if tk == "SI" else tk
-                # MacroDroid'in pürüzsüz kırpabilmesi için saf yazılım dili şablonu (Parça 2'nin en altı)
         return f"sembol={stk}&tip={mt_tur}&islem={sig}&lot={lot:.2f}&sl={sl:.4f}&tp={tp:.4f}"
- f"Sembol: {stk}\nIslem Tipi: {mt_tur}\nIslem: {sig}\nLot: {lot:.2f}\nSL: {sl:.4f}\nTP: {tp:.4f}"
     except: return None
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [['📊 SAATLIK ANALIZ', '📊 GUNLUK ANALIZ'], ['📊 ISLEM ISTATISTIKLERI']]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -118,7 +115,7 @@ async def islem_kapat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM signals WHERE ticker=%s AND status='PENDING' ORDER BY id DESC LIMIT 1", (tk,))
         row = cursor.fetchone()
-        if row: cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (secilen_durum, row[0]))
+        if row: cursor.execute("UPDATE signals SET status=%s WHERE id=%s", (secilen_durum, row))
         else:
             zaman = datetime.now().strftime("%m-%d %H:%M")
             cursor.execute("INSERT INTO signals (ticker, signal, price, sl, tp, timestamp, status) VALUES (%s, 'manual', 0, 0, 0, %s, %s)", (tk, zaman, secilen_durum))
